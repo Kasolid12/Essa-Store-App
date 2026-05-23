@@ -3,7 +3,7 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QTabWidget, 
     QTableWidgetItem, QHeaderView, QComboBox, QSpinBox, 
     QDateEdit, QMessageBox, QFrame, QCompleter, QDoubleSpinBox, 
-    QGridLayout, QLineEdit
+    QGridLayout, QLineEdit, QCheckBox
 )
 from PySide6.QtCore import Qt, QDate
 
@@ -12,6 +12,7 @@ from ui.components.buttons import CyberButton
 from ui.theme import Theme
 from data.database import SessionLocal
 from data.models import HasilCutting, DistribusiCutting, PengeluaranOffline, ModalOperasional, SkuMaster, Person
+from data.models.debt import DebtEntry
 
 class CatatanHarianView(QWidget):
     def __init__(self):
@@ -28,6 +29,7 @@ class CatatanHarianView(QWidget):
         self.load_distribusi()
         self.load_offline()
         self.load_operasional()
+        self.load_sumber_dropdowns()
 
     def setup_ui(self):
         layout = QVBoxLayout(self)
@@ -100,6 +102,13 @@ class CatatanHarianView(QWidget):
         
         self.btn_submit_cut = CyberButton("SIMPAN CUTTING")
         self.btn_submit_cut.clicked.connect(self.submit_cutting)
+        
+        self.cut_sumber_kain = QComboBox()
+        self.cut_sumber_kain.setMinimumWidth(250)
+        
+        self.chk_kain_habis = QCheckBox("Kain Habis (Full Cut)")
+        self.chk_kain_habis.setStyleSheet(f"color: {Theme.NEON_PINK}; font-weight: bold;")
+        self.chk_kain_habis.setToolTip("Centang jika roll kain ini sudah habis dipotong semua.")
 
         form_lay.addWidget(QLabel("Tanggal:"))
         form_lay.addWidget(self.date_cut)
@@ -147,6 +156,9 @@ class CatatanHarianView(QWidget):
         
         self.btn_submit_dist = CyberButton("SIMPAN DISTRIBUSI")
         self.btn_submit_dist.clicked.connect(self.submit_distribusi)
+        
+        self.dist_sumber_cutting = QComboBox()
+        self.dist_sumber_cutting.setMinimumWidth(300)
 
         form_lay.addWidget(QLabel("Tanggal:"))
         form_lay.addWidget(self.date_dist)
@@ -374,15 +386,35 @@ class CatatanHarianView(QWidget):
     def submit_cutting(self):
         sku_id = self.get_valid_combo_data(self.sku_cut, "SKU tidak ditemukan! Pilih dari daftar.")
         if not sku_id: return
+        modal_id = self.cut_sumber_kain.currentData()
+        is_habis = self.chk_kain_habis.isChecked()
+        
         try:
-            record = HasilCutting(tanggal=self.date_cut.date().toString("yyyy-MM-dd"), sku_id=sku_id, qty=self.qty_cut.value(), catatan="Manual Input")
-            self.db.add(record)
+            # Buat record Hasil Cutting baru
+            cut_entry = HasilCutting(
+                tanggal=self.date_cut,
+                sku_id=sku_id,
+                qty=self.qty_cut,
+                modal_hutang_id=modal_id            
+                )
+            self.db.add(cut_entry)
+            
+            # Jika dicentang habis, update status kain di tabel Modal Hutang
+            if modal_id and is_habis:
+                kain = self.db.query(DebtEntry).get(modal_id)
+                if kain:
+                    kain.status_cutting = 'FULL'
+                    
             self.db.commit()
-            self.load_hasil_cutting()
-            self.qty_cut.setValue(0); self.sku_cut.lineEdit().clear() 
+            
+            # Refresh UI
+            self.load_sumber_dropdowns()
+            self.chk_kain_habis.setChecked(False)
+            QMessageBox.information(self, "Sukses", "Data Cutting berhasil disimpan!")
+            
         except Exception as e:
             self.db.rollback()
-            QMessageBox.critical(self, "Error", f"Gagal: {e}")
+            QMessageBox.critical(self, "Error", f"Gagal menyimpan: {e}")
 
     def submit_distribusi(self):
         person_id = self.get_valid_combo_data(self.person_dist, "Penerima tidak ditemukan! Pilih dari daftar.")
@@ -390,15 +422,28 @@ class CatatanHarianView(QWidget):
         if not person_id or not sku_id: return
         person_record = self.db.query(Person).get(person_id)
         jenis_pekerjaan = person_record.person_type if person_record else 'PENJAHIT'
+        cutting_id = self.dist_sumber_cutting.currentData()
+        if not cutting_id:
+            QMessageBox.warning(self, "Peringatan", "Pilih Batch Cutting terlebih dahulu!")
+            return
+            
         try:
-            record = DistribusiCutting(tanggal=self.date_dist.date().toString("yyyy-MM-dd"), person_id=person_id, jenis=jenis_pekerjaan, sku_id=sku_id, qty=self.qty_dist.value(), catatan="Manual Input")
-            self.db.add(record)
+            dist_entry = DistribusiCutting(
+                tanggal=self.date_dist,
+                person_id=person_id,
+                jenis=self.person_dist, # 'PENJAHIT' atau 'PENGSUP'
+                sku_id=sku_id,
+                qty=self.qty_dist,
+                hasil_cutting_id=cutting_id # <--- SIMPAN ID BATCH CUTTING
+            )
+            self.db.add(dist_entry)
             self.db.commit()
-            self.load_distribusi()
-            self.qty_dist.setValue(0); self.sku_dist.lineEdit().clear(); self.person_dist.lineEdit().clear()
+            
+            QMessageBox.information(self, "Sukses", "Data Distribusi berhasil disimpan!")
+            
         except Exception as e:
             self.db.rollback()
-            QMessageBox.critical(self, "Error", f"Gagal: {e}")
+            QMessageBox.critical(self, "Error", f"Gagal menyimpan: {e}")
 
     def submit_offline(self):
         person_id = self.get_valid_combo_data(self.person_off, "Pembeli tidak ditemukan! Pilih Klien dari daftar.")
@@ -442,6 +487,33 @@ class CatatanHarianView(QWidget):
         except Exception as e:
             self.db.rollback()
             QMessageBox.critical(self, "Error", f"Gagal: {e}")
+    
+    def load_sumber_dropdowns(self):
+        """Memuat data kain yang belum habis dan batch cutting yang tersedia."""
+        
+        # 1. Load Sumber Kain (Hanya yang statusnya OPEN atau PARTIAL)
+        self.cut_sumber_kain.clear()
+        self.cut_sumber_kain.addItem("-- Pilih Sumber Kain --", None)
+        
+        kain_aktif = self.db.query(DebtEntry).filter(
+            DebtEntry.tipe_hutang == 'MODAL',
+            DebtEntry.status_cutting.in_(['OPEN', 'PARTIAL'])
+        ).all()
+        
+        for k in kain_aktif:
+            # Format: [Tgl] Nama Kain (Rp X)
+            label = f"[{k.tanggal}] {k.keterangan} (Rp {k.nominal_hutang:,.0f})"
+            self.cut_sumber_kain.addItem(label, k.id)
+
+        # 2. Load Sumber Batch Cutting (100 transaksi terakhir)
+        self.dist_sumber_cutting.clear()
+        self.dist_sumber_cutting.addItem("-- Pilih Batch Cutting --", None)
+        
+        cutting_aktif = self.db.query(HasilCutting).order_by(HasilCutting.id.desc()).limit(100).all()
+        for c in cutting_aktif:
+            sku_nama = c.sku.nama_produk if c.sku else "Unknown"
+            label = f"Batch #{c.id} | {c.tanggal} - {sku_nama} ({c.qty} Pcs)"
+            self.dist_sumber_cutting.addItem(label, c.id)
 
     def closeEvent(self, event):
         self.db.close()

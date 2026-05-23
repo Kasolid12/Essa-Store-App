@@ -3,6 +3,8 @@ from typing import Optional, List
 from sqlalchemy import String, Float, Integer, ForeignKey, DateTime
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from .base import Base
+from sqlalchemy.orm import relationship, Mapped, mapped_column
+from sqlalchemy import String, Integer, Float, ForeignKey
 
 class DebtEntry(Base):
     __tablename__ = "debt_entries"
@@ -28,6 +30,12 @@ class DebtEntry(Base):
     person = relationship("Person")
     sku = relationship("SkuMaster")
     payments: Mapped[List["DebtPayment"]] = relationship("DebtPayment", back_populates="debt_entry")
+    
+    # Tracking status untuk profit dashboard
+    status_cutting: Mapped[str] = mapped_column(String, default="OPEN") 
+    
+    # Relasi ke tabel hasil cutting
+    hasil_cuttings = relationship("HasilCutting", back_populates="sumber_modal")
 
 class DebtPayment(Base):
     __tablename__ = "debt_payments"

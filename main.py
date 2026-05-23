@@ -17,6 +17,7 @@ from ui.views.hutang_view import HutangView
 from ui.views.gaji_view import GajiView
 from ui.views.stock_view import StockView
 from ui.views.invoice_view import InvoiceView
+from ui.views.profit_view import ProfitSimulationView
 from utils.backup_engine import backup_database
 
 class ESSAMainWindow(QMainWindow):
@@ -74,6 +75,7 @@ class ESSAMainWindow(QMainWindow):
             ("gaji", "PAYROLL & BON"),
             ("stok", "STOCK MANAGER"),
             ("invoice", "INVOICE & PIUTANG"),
+            ("profit", "PROFIT SIMULATION"),
             ("master", "DATA MANAGER")
         ]
 
@@ -143,6 +145,11 @@ class ESSAMainWindow(QMainWindow):
         page_invoice = InvoiceView()
         self.pages["invoice"] = page_invoice
         self.stacked_widget.addWidget(page_invoice)
+        
+        # 8. Profit Simulation
+        page_profit = ProfitSimulationView()
+        self.pages["profit"] = page_profit
+        self.stacked_widget.addWidget(page_profit)
 
         content_layout.addWidget(self.stacked_widget)
         self.main_layout.addWidget(self.content_area)

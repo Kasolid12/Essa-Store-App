@@ -14,7 +14,6 @@ from ui.components.buttons import CyberButton
 from ui.theme import Theme
 from data.database import SessionLocal
 from data.models import DebtEntry, DebtPayment, Person, SkuMaster
-
 class HutangView(QWidget):
     def __init__(self):
         super().__init__()
