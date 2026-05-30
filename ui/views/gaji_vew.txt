@@ -57,12 +57,10 @@ class GajiView(QWidget):
         self.setup_tab_penjahit()
         self.setup_tab_pengsup()
         self.setup_tab_pasukan()
-        self.setup_tab_bon()
 
         self.tabs.addTab(self.tab_penjahit, "GAJI PENJAHIT")
         self.tabs.addTab(self.tab_pengsup, "TOTALAN PENGSUP")
         self.tabs.addTab(self.tab_pasukan, "GAJI KARYAWAN (ABSENSI)")
-        self.tabs.addTab(self.tab_bon, "KASBON / UTANG")
         
         layout.addWidget(self.tabs)
 
@@ -349,98 +347,6 @@ class GajiView(QWidget):
         bot_lay.addWidget(btn_recalc)
         bot_lay.addWidget(btn_save_pasukan)
         lay.addLayout(bot_lay)
-    
-    # ==========================================
-    # 4. TAB MANAJEMEN BON (Telah Di-Upgrade)
-    # ==========================================
-    def setup_tab_bon(self):
-        self.tab_bon = QWidget()
-        main_lay = QVBoxLayout(self.tab_bon)
-        
-        # --- TAB INNER UNTUK BON ---
-        self.bon_tabs = QTabWidget()
-        self.bon_tabs.setStyleSheet(f"""
-            QTabBar::tab {{ background: {Theme.BG_VOID}; color: {Theme.TEXT_MUTED}; border: 1px solid {Theme.BORDER_DIM}; padding: 10px 20px; font-weight: bold; }}
-            QTabBar::tab:selected {{ background: {Theme.BG_PANEL}; color: {Theme.NEON_CYAN}; border-bottom: 2px solid {Theme.NEON_CYAN}; }}
-            QTabWidget::pane {{ border: 1px solid {Theme.BORDER_DIM}; top: -1px; }}
-        """)
-        
-        # --- 4A. SUB-TAB: DASHBOARD BON (Tampilan Asli) ---
-        self.sub_tab_dash_bon = QWidget()
-        lay_dash = QVBoxLayout(self.sub_tab_dash_bon)
-        
-        top_lay = QHBoxLayout()
-        top_lay.addWidget(QLabel("Daftar Sisa Kasbon Aktif:"))
-        top_lay.addStretch()
-        
-        self.btn_refresh_bon = CyberButton("🔄 REFRESH DATA BON")
-        self.btn_refresh_bon.clicked.connect(self.load_bon)
-        top_lay.addWidget(self.btn_refresh_bon)
-        lay_dash.addLayout(top_lay)
-        
-        self.table_bon = CyberTable()
-        self.table_bon.setColumnCount(4)
-        self.table_bon.setHorizontalHeaderLabels(["ID Person", "Nama Personel", "Tipe Personel", "Sisa Kasbon"])
-        self.table_bon.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
-        lay_dash.addWidget(self.table_bon)
-        
-        # --- 4B. SUB-TAB: UPDATE BON MANUAL (Baru) ---
-        self.sub_tab_manual_bon = QWidget()
-        lay_manual = QVBoxLayout(self.sub_tab_manual_bon)
-        
-        form_group = QGroupBox("FORM UPDATE MANUAL KASBON")
-        form_group.setStyleSheet(f"QGroupBox {{ color: {Theme.NEON_YELLOW}; font-weight: bold; border: 1px solid #2d2d38; padding: 15px; margin-top: 10px; }}")
-        form_lay = QGridLayout(form_group)
-        
-        self.cb_bon_person = QComboBox()
-        self.cb_bon_person.currentIndexChanged.connect(self.on_bon_manual_person_changed)
-        
-        self.lbl_bon_saldo = QLabel("Rp 0")
-        self.lbl_bon_saldo.setStyleSheet(f"font-size: 16pt; font-weight: bold; color: {Theme.NEON_PINK};")
-        
-        self.cb_bon_aksi = QComboBox()
-        self.cb_bon_aksi.addItems(["+ TAMBAH BON BARU", "- POTONG BON (BAYAR TUNAI)"])
-        
-        self.spin_bon_nominal = QDoubleSpinBox()
-        self.spin_bon_nominal.setRange(0, 999999999)
-        self.spin_bon_nominal.setPrefix("Rp ")
-        
-        self.txt_bon_ket = QLineEdit()
-        self.txt_bon_ket.setPlaceholderText("Catatan (Misal: Pinjam darurat, Cicil tunai...)")
-        
-        btn_submit_manual = CyberButton("SIMPAN UPDATE BON")
-        btn_submit_manual.clicked.connect(self.submit_manual_bon)
-        
-        form_lay.addWidget(QLabel("Pilih Nama:"), 0, 0)
-        form_lay.addWidget(self.cb_bon_person, 0, 1)
-        form_lay.addWidget(QLabel("Sisa Saldo Saat Ini:"), 0, 2)
-        form_lay.addWidget(self.lbl_bon_saldo, 0, 3)
-        
-        line = QFrame(); line.setFrameShape(QFrame.Shape.HLine); line.setStyleSheet("background-color: #2d2d38;")
-        form_lay.addWidget(line, 1, 0, 1, 4)
-        
-        form_lay.addWidget(QLabel("Jenis Tindakan:"), 2, 0)
-        form_lay.addWidget(self.cb_bon_aksi, 2, 1)
-        form_lay.addWidget(QLabel("Nominal:"), 2, 2)
-        form_lay.addWidget(self.spin_bon_nominal, 2, 3)
-        
-        form_lay.addWidget(QLabel("Keterangan:"), 3, 0)
-        form_lay.addWidget(self.txt_bon_ket, 3, 1, 1, 2)
-        form_lay.addWidget(btn_submit_manual, 3, 3)
-        
-        lay_manual.addWidget(form_group)
-        
-        lay_manual.addWidget(QLabel("Riwayat Transaksi Kasbon (Orang Terpilih):"))
-        self.table_bon_history = CyberTable()
-        self.table_bon_history.setColumnCount(5)
-        self.table_bon_history.setHorizontalHeaderLabels(["Tanggal", "Jenis", "Sumber", "Keterangan", "Nominal"])
-        self.table_bon_history.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
-        lay_manual.addWidget(self.table_bon_history)
-        
-        # Satukan ke Tab Utama
-        self.bon_tabs.addTab(self.sub_tab_dash_bon, "DASHBOARD KASBON")
-        self.bon_tabs.addTab(self.sub_tab_manual_bon, "UPDATE BON MANUAL")
-        main_lay.addWidget(self.bon_tabs)
 
     # ==========================================
     # LOGIC UMUM & PENJAHIT
@@ -448,20 +354,6 @@ class GajiView(QWidget):
     def load_dropdowns(self):
         self.penj_person.clear(); self.penj_person.addItem("-- Pilih Penjahit --", None)
         self.psup_person.clear(); self.psup_person.addItem("-- Pilih Pengsup --", None)
-        # --- PERBAIKAN FINAL DROPDOWN BON ---
-        if hasattr(self, 'cb_bon_person'):
-            self.cb_bon_person.blockSignals(True)
-            self.cb_bon_person.clear()
-            self.cb_bon_person.addItem("-- Pilih Nama --", None)
-            
-            # KODE BARU: Ambil data mandiri langsung dari database agar tidak error
-            bon_persons = self.db.query(Person).filter(Person.person_type.in_(['PENJAHIT', 'PENGSUP', 'KARYAWAN'])).order_by(Person.nama).all()
-            
-            for p in bon_persons:
-                self.cb_bon_person.addItem(f"{p.nama} ({p.person_type})", p.id)
-                
-            self.cb_bon_person.blockSignals(False)
-        # ------------------------------------
         
         persons = self.db.query(Person).all()
         for p in persons:
@@ -479,97 +371,6 @@ class GajiView(QWidget):
         for s in skus:
             kode_teks = str(s.kode_sku) if s.kode_sku else "NO-KODE"
             self.psup_sku.addItem(kode_teks, kode_teks)
-    
-    # --- LOGIKA UPDATE BON MANUAL ---
-    def on_bon_manual_person_changed(self):
-        person_id = self.cb_bon_person.currentData()
-        if not person_id:
-            self.lbl_bon_saldo.setText("Rp 0")
-            self.table_bon_history.setRowCount(0)
-            return
-            
-        balance = self.db.query(BonBalance).filter(BonBalance.person_id == person_id).first()
-        saldo_saat_ini = balance.saldo if balance else 0
-        self.lbl_bon_saldo.setText(f"Rp {saldo_saat_ini:,.0f}")
-        
-        movements = self.db.query(BonMovement).filter(BonMovement.person_id == person_id).order_by(BonMovement.id.desc()).limit(30).all()
-        self.table_bon_history.setRowCount(len(movements))
-        for row, m in enumerate(movements):
-            self.table_bon_history.setItem(row, 0, QTableWidgetItem(str(m.tanggal)))
-            
-            jenis_item = QTableWidgetItem(m.tipe)
-            if "TAMBAH" in m.tipe: jenis_item.setForeground(Qt.GlobalColor.yellow)
-            else: jenis_item.setForeground(Qt.GlobalColor.green)
-            self.table_bon_history.setItem(row, 1, jenis_item)
-            
-            self.table_bon_history.setItem(row, 2, QTableWidgetItem(str(m.sumber)))
-            self.table_bon_history.setItem(row, 3, QTableWidgetItem(str(m.keterangan) if m.keterangan else "-"))
-            nom_item = QTableWidgetItem(f"Rp {m.nominal:,.0f}")
-            nom_item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-            self.table_bon_history.setItem(row, 4, nom_item)
-
-    def submit_manual_bon(self):
-        person_id = self.cb_bon_person.currentData()
-        nominal = self.spin_bon_nominal.value()
-        is_tambah = (self.cb_bon_aksi.currentIndex() == 0)
-        ket = self.txt_bon_ket.text().strip()
-        
-        if not person_id: return QMessageBox.warning(self, "Error", "Pilih nama terlebih dahulu!")
-        if nominal <= 0: return QMessageBox.warning(self, "Error", "Nominal tidak boleh nol!")
-            
-        try:
-            balance = self.db.query(BonBalance).filter(BonBalance.person_id == person_id).first()
-            if not balance:
-                balance = BonBalance(person_id=person_id, saldo=0)
-                self.db.add(balance)
-                
-            if not is_tambah and nominal > balance.saldo:
-                return QMessageBox.warning(self, "Error", "Potongan tidak boleh lebih besar dari sisa saldo!")
-
-            if is_tambah:
-                balance.saldo += nominal
-                tipe_mov = "TAMBAH_MANUAL"
-            else:
-                balance.saldo -= nominal
-                tipe_mov = "POTONG_MANUAL"
-                
-            tgl_sekarang = QDate.currentDate().toString("yyyy-MM-dd")
-            catatan = ket if ket else "Update Manual Kasir"
-            
-            movement = BonMovement(
-                person_id=person_id, tanggal=tgl_sekarang, tipe=tipe_mov, 
-                nominal=nominal, sumber="UPDATE_MANUAL"
-            )
-            self.db.add(movement)
-            self.db.commit()
-            
-            QMessageBox.information(self, "Sukses", "Data kasbon berhasil diupdate manual!")
-            
-            self.spin_bon_nominal.setValue(0)
-            self.txt_bon_ket.clear()
-            self.on_bon_manual_person_changed()
-            if hasattr(self, 'load_bon'): self.load_bon() # Auto-refresh dashboard
-                
-        except Exception as e:
-            self.db.rollback()
-            QMessageBox.critical(self, "Error", f"Terjadi kesalahan database: {e}")
-            
-    def load_bon(self):
-        self.table_bon.setRowCount(0)
-        # Ambil data saldo yang lebih dari 0
-        balances = self.db.query(BonBalance).filter(BonBalance.saldo > 0).all()
-        
-        self.table_bon.setRowCount(len(balances))
-        for row, b in enumerate(balances):
-            self.table_bon.setItem(row, 0, QTableWidgetItem(str(b.person_id)))
-            self.table_bon.setItem(row, 1, QTableWidgetItem(b.person.nama if b.person else "Unknown"))
-            self.table_bon.setItem(row, 2, QTableWidgetItem(b.person.person_type if b.person else "-"))
-            
-            saldo_item = QTableWidgetItem(f"Rp {b.saldo:,.0f}")
-            # Warna pink/magenta untuk sisa bon
-            saldo_item.setForeground(Qt.GlobalColor.magenta)
-            saldo_item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-            self.table_bon.setItem(row, 3, saldo_item)
 
     def on_garapan_changed(self, index):
         if index > 0:

@@ -3,7 +3,7 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QTabWidget, 
     QTableWidgetItem, QHeaderView, QComboBox, QSpinBox, 
     QDateEdit, QMessageBox, QFrame, QDoubleSpinBox, QCompleter, QGridLayout,
-    QAbstractItemView # <-- NEW IMPORT for Multi-Select
+    QAbstractItemView, QLineEdit
 )
 import os
 from utils.pdf_engine import generate_batch_receipt_pdf
@@ -14,22 +14,21 @@ from ui.components.buttons import CyberButton
 from ui.theme import Theme
 from data.database import SessionLocal
 from data.models import DebtEntry, DebtPayment, Person, SkuMaster
+
 class HutangView(QWidget):
     def __init__(self):
         super().__init__()
         self.db = SessionLocal()
         
-        # Track selected IDs and their balances for Batch Payments
         self.selected_barang_debt_ids = [] 
         self.selected_modal_debt_ids = []
-        
-        # Track single ID for Editing
         self.selected_barang_edit_id = None 
         
         self.setup_ui()
         self.load_dropdowns()
         self.load_barang_terhutang()
         self.load_modal_hutang()
+        self.generate_kode_produksi()
 
     def setup_ui(self):
         layout = QVBoxLayout(self)
@@ -70,7 +69,7 @@ class HutangView(QWidget):
             completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
 
     # ==========================================
-    # 1. TAB BARANG TERHUTANG
+    # 1. TAB BARANG TERHUTANG (Tetap Sama)
     # ==========================================
     def setup_tab_barang(self):
         self.tab_barang = QWidget()
@@ -84,15 +83,12 @@ class HutangView(QWidget):
         self.table_barang.setColumnCount(8)
         self.table_barang.setHorizontalHeaderLabels(["ID", "Tgl Ambil", "Supplier", "SKU", "Qty", "Total Hutang", "Terbayar", "Status"])
         self.table_barang.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
-        
-        # --- NEW: Enable Multi-Selection ---
         self.table_barang.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self.table_barang.itemSelectionChanged.connect(self.on_barang_selected)
         lay.addWidget(self.table_barang, stretch=2)
 
         bottom_lay = QHBoxLayout()
         
-        # --- KIRI: Form Hutang Baru / Edit ---
         frame_baru = QFrame()
         frame_baru.setObjectName("GridPanel")
         lay_baru = QGridLayout(frame_baru)
@@ -108,7 +104,6 @@ class HutangView(QWidget):
         self.brg_sku = QComboBox(); self.brg_sku.setEditable(True); self.brg_sku.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
         self.setup_completer(self.brg_sku)
         
-        # --- NEW: Qty, Harga, and Auto-Total ---
         self.brg_qty = QDoubleSpinBox()
         self.brg_qty.setRange(0.01, 99999)
         self.brg_qty.valueChanged.connect(self.calc_brg_total)
@@ -121,11 +116,10 @@ class HutangView(QWidget):
         self.brg_total = QDoubleSpinBox()
         self.brg_total.setRange(0, 999999999)
         self.brg_total.setPrefix("Rp ")
-        self.brg_total.setReadOnly(True) # Locked, auto-calculated
+        self.brg_total.setReadOnly(True)
         self.brg_total.setStyleSheet(f"background-color: {Theme.BG_VOID}; color: {Theme.NEON_PINK}; font-weight: bold;")
         self.brg_total.buttonSymbols = QDoubleSpinBox.ButtonSymbols.NoButtons
         
-        # ... (keep the buttons setup) ...
         brg_btn_lay = QHBoxLayout()
         self.btn_simpan_brg = CyberButton("SIMPAN BARU")
         self.btn_simpan_brg.clicked.connect(self.submit_barang_hutang)
@@ -139,7 +133,6 @@ class HutangView(QWidget):
         brg_btn_lay.addWidget(self.btn_reset_brg)
         brg_btn_lay.addWidget(self.btn_delete_brg)
 
-        # --- UPDATE: Grid Layout ---
         lay_baru.addWidget(QLabel("Tanggal:"), 1, 0); lay_baru.addWidget(self.brg_date, 1, 1)
         lay_baru.addWidget(QLabel("Supplier:"), 2, 0); lay_baru.addWidget(self.brg_person, 2, 1)
         lay_baru.addWidget(QLabel("SKU:"), 3, 0); lay_baru.addWidget(self.brg_sku, 3, 1)
@@ -150,7 +143,6 @@ class HutangView(QWidget):
         
         bottom_lay.addWidget(frame_baru, stretch=1)
         
-        # --- KANAN: Form Pelunasan BATCH ---
         frame_lunas = QFrame()
         frame_lunas.setObjectName("GridPanel")
         lay_lunas = QVBoxLayout(frame_lunas)
@@ -178,7 +170,7 @@ class HutangView(QWidget):
         lay.addLayout(bottom_lay)
 
     # ==========================================
-    # 2. TAB MODAL HUTANG
+    # 2. TAB MODAL HUTANG (UPDATED: Tambah Kode Batch)
     # ==========================================
     def setup_tab_modal(self):
         self.tab_modal = QWidget()
@@ -189,18 +181,15 @@ class HutangView(QWidget):
         lay.addWidget(lbl_hint)
         
         self.table_modal = CyberTable()
-        self.table_modal.setColumnCount(7)
-        self.table_modal.setHorizontalHeaderLabels(["ID", "Tgl Hutang", "Pemberi Modal", "Keterangan", "Total Hutang", "Deposit/Lunas", "Status"])
+        self.table_modal.setColumnCount(8) # Diperbarui: Tambah 1 kolom untuk Kode Batch
+        self.table_modal.setHorizontalHeaderLabels(["ID", "Tgl Hutang", "Pemberi Modal", "Kode Batch", "Keterangan", "Total Hutang", "Deposit/Lunas", "Status"])
         self.table_modal.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
-        
-        # --- NEW: Enable Multi-Selection ---
         self.table_modal.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self.table_modal.itemSelectionChanged.connect(self.on_modal_selected)
         lay.addWidget(self.table_modal, stretch=2)
 
         bottom_lay = QHBoxLayout()
         
-        # --- KIRI: Form Hutang Baru / Edit ---
         frame_baru = QFrame()
         frame_baru.setObjectName("GridPanel")
         lay_baru = QGridLayout(frame_baru)
@@ -210,14 +199,19 @@ class HutangView(QWidget):
         lay_baru.addWidget(self.lbl_title_mod, 0, 0, 1, 2)
         
         self.mod_date = QDateEdit(QDate.currentDate()); self.mod_date.setCalendarPopup(True)
+        self.mod_date.dateChanged.connect(self.generate_kode_produksi)
         self.mod_person = QComboBox(); self.mod_person.setEditable(True); self.mod_person.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
         self.setup_completer(self.mod_person)
+        
+        # --- NEW: Kolom Input Kode Produksi/Batch ---
+        self.mod_kode_produksi = QLineEdit()
+        self.mod_kode_produksi.setPlaceholderText("Misal: PRD-001")
+        self.mod_kode_produksi.setStyleSheet(f"background-color: {Theme.BG_VOID}; color: {Theme.NEON_CYAN}; font-weight: bold;")
         
         self.mod_jenis = QComboBox()
         self.mod_jenis.addItems(["Kain Jersey", "Label Akrilik", "Hangtag", "Modal Tunai", "Lainnya"])
         self.mod_jenis.setEditable(True)
         
-        # --- NEW: Qty, Harga, and Auto-Total ---
         self.mod_qty = QDoubleSpinBox()
         self.mod_qty.setRange(0.01, 99999)
         self.mod_qty.valueChanged.connect(self.calc_mod_total)
@@ -234,7 +228,6 @@ class HutangView(QWidget):
         self.mod_total.setStyleSheet(f"background-color: {Theme.BG_VOID}; color: {Theme.NEON_PINK}; font-weight: bold;")
         self.mod_total.buttonSymbols = QDoubleSpinBox.ButtonSymbols.NoButtons
         
-        # ... (keep buttons) ...
         mod_btn_lay = QHBoxLayout()
         self.btn_simpan_mod = CyberButton("SIMPAN BARU")
         self.btn_simpan_mod.clicked.connect(self.submit_modal_hutang)
@@ -248,19 +241,18 @@ class HutangView(QWidget):
         mod_btn_lay.addWidget(self.btn_reset_mod)
         mod_btn_lay.addWidget(self.btn_delete_mod)
 
-        # --- UPDATE: Grid Layout ---
+        # Update Grid Layout Form
         lay_baru.addWidget(QLabel("Tanggal:"), 1, 0); lay_baru.addWidget(self.mod_date, 1, 1)
         lay_baru.addWidget(QLabel("Pemberi Modal:"), 2, 0); lay_baru.addWidget(self.mod_person, 2, 1)
-        lay_baru.addWidget(QLabel("Jenis/Ket:"), 3, 0); lay_baru.addWidget(self.mod_jenis, 3, 1)
-        lay_baru.addWidget(QLabel("Qty / Jumlah:"), 4, 0); lay_baru.addWidget(self.mod_qty, 4, 1)
-        lay_baru.addWidget(QLabel("Harga Satuan:"), 5, 0); lay_baru.addWidget(self.mod_harga, 5, 1)
-        lay_baru.addWidget(QLabel("Total Hutang:"), 6, 0); lay_baru.addWidget(self.mod_total, 6, 1)
-        lay_baru.addLayout(mod_btn_lay, 7, 0, 1, 2)
-        lay_baru.addLayout(mod_btn_lay, 5, 0, 1, 2)
+        lay_baru.addWidget(QLabel("Kode Batch:"), 3, 0); lay_baru.addWidget(self.mod_kode_produksi, 3, 1)
+        lay_baru.addWidget(QLabel("Jenis/Ket:"), 4, 0); lay_baru.addWidget(self.mod_jenis, 4, 1)
+        lay_baru.addWidget(QLabel("Qty / Jumlah:"), 5, 0); lay_baru.addWidget(self.mod_qty, 5, 1)
+        lay_baru.addWidget(QLabel("Harga Satuan:"), 6, 0); lay_baru.addWidget(self.mod_harga, 6, 1)
+        lay_baru.addWidget(QLabel("Total Hutang:"), 7, 0); lay_baru.addWidget(self.mod_total, 7, 1)
+        lay_baru.addLayout(mod_btn_lay, 8, 0, 1, 2)
         
         bottom_lay.addWidget(frame_baru, stretch=1)
         
-        # --- KANAN: Form Pelunasan BATCH ---
         frame_lunas = QFrame()
         frame_lunas.setObjectName("GridPanel")
         lay_lunas = QVBoxLayout(frame_lunas)
@@ -287,7 +279,6 @@ class HutangView(QWidget):
         bottom_lay.addWidget(frame_lunas, stretch=1)
         lay.addLayout(bottom_lay)
 
-    # --- LOADERS ---
     def load_dropdowns(self):
         self.brg_person.clear()
         self.mod_person.clear()
@@ -297,9 +288,13 @@ class HutangView(QWidget):
             self.mod_person.addItem(p.nama, p.id)
             
         self.brg_sku.clear()
-        skus = self.db.query(SkuMaster).filter(SkuMaster.is_active == 1).order_by(SkuMaster.kode_sku).all()
+        self.brg_sku.addItem("-- Pilih SKU --", None)
+        
+        # Hapus filter is_active dan bungkus dengan str()
+        skus = self.db.query(SkuMaster).order_by(SkuMaster.kode_sku).all()
         for s in skus:
-            self.brg_sku.addItem(s.kode_sku, s.id)
+            kode_teks = str(s.kode_sku) if s.kode_sku else "NO-KODE"
+            self.brg_sku.addItem(kode_teks, s.id)
 
     def calculate_paid(self, debt_entry):
         return sum(p.nominal_bayar for p in debt_entry.payments)
@@ -340,30 +335,34 @@ class HutangView(QWidget):
             self.table_modal.setItem(r, 0, QTableWidgetItem(str(d.id)))
             self.table_modal.setItem(r, 1, QTableWidgetItem(d.tanggal))
             self.table_modal.setItem(r, 2, QTableWidgetItem(d.person.nama if d.person else "Unknown"))
-            self.table_modal.setItem(r, 3, QTableWidgetItem(d.keterangan))
-            self.table_modal.setItem(r, 4, QTableWidgetItem(f"Rp {d.nominal_hutang:,.0f}"))
+            
+            # --- Tampilkan Kode Produksi di Tabel ---
+            kode_prod = getattr(d, 'kode_produksi', None)
+            item_kode = QTableWidgetItem(kode_prod if kode_prod else "-")
+            item_kode.setForeground(Qt.GlobalColor.cyan)
+            self.table_modal.setItem(r, 3, item_kode)
+            
+            self.table_modal.setItem(r, 4, QTableWidgetItem(d.keterangan))
+            self.table_modal.setItem(r, 5, QTableWidgetItem(f"Rp {d.nominal_hutang:,.0f}"))
             
             terbayar = self.calculate_paid(d)
-            self.table_modal.setItem(r, 5, QTableWidgetItem(f"Rp {terbayar:,.0f}"))
+            self.table_modal.setItem(r, 6, QTableWidgetItem(f"Rp {terbayar:,.0f}"))
             
             status_item = QTableWidgetItem(d.status)
             if d.status == 'OPEN': status_item.setForeground(Qt.GlobalColor.red)
             elif d.status == 'LUNAS': status_item.setForeground(Qt.GlobalColor.green)
-            self.table_modal.setItem(r, 6, status_item)
+            self.table_modal.setItem(r, 7, status_item)
 
-    # --- NEW: MULTI-SELECTION HANDLERS ---
     def on_barang_selected(self):
         sel = self.table_barang.selectedItems()
         if not sel: 
             self.reset_barang_form()
             return
             
-        # Get unique selected rows
         rows = list(set([item.row() for item in sel]))
         self.selected_barang_debt_ids = []
         total_sisa = 0.0
         
-        # 1. Update Left Side (Edit Data Mode) - Based on the first item clicked
         first_row = rows[0]
         self.selected_barang_edit_id = int(self.table_barang.item(first_row, 0).text())
         
@@ -383,24 +382,21 @@ class HutangView(QWidget):
             self.btn_simpan_brg.setText("UPDATE DATA")
             self.btn_delete_brg.setEnabled(True)
 
-        # 2. Update Right Side (Batch Pelunasan)
         for r in rows:
             d_id = int(self.table_barang.item(r, 0).text())
             status = self.table_barang.item(r, 7).text()
             
             if status != 'LUNAS':
-                # Calculate Sisa = Total - Terbayar
                 tot = float(self.table_barang.item(r, 5).text().replace("Rp", "").replace(",", "").strip())
                 bayar = float(self.table_barang.item(r, 6).text().replace("Rp", "").replace(",", "").strip())
                 sisa = tot - bayar
-                
                 self.selected_barang_debt_ids.append((d_id, sisa))
                 total_sisa += sisa
                 
         if self.selected_barang_debt_ids:
             self.lbl_selected_brg.setText(f"{len(self.selected_barang_debt_ids)} BARIS DIPILIH | TOTAL SISA: Rp {total_sisa:,.0f}")
             self.btn_brg_lunas.setEnabled(True)
-            self.brg_lunas_nom.setValue(total_sisa) # Auto-fill total required
+            self.brg_lunas_nom.setValue(total_sisa)
         else:
             self.lbl_selected_brg.setText("PILIHAN SUDAH LUNAS")
             self.btn_brg_lunas.setEnabled(False)
@@ -424,6 +420,10 @@ class HutangView(QWidget):
             self.lbl_title_mod.setText(f"EDIT PINJAMAN ID: {debt.id}")
             self.mod_date.setDate(QDate.fromString(debt.tanggal, "yyyy-MM-dd"))
             
+            # --- Isi Form Kode Batch saat mode edit ---
+            kode_prod = getattr(debt, 'kode_produksi', "")
+            self.mod_kode_produksi.setText(kode_prod if kode_prod else "")
+            
             idx_person = self.mod_person.findData(debt.person_id)
             if idx_person >= 0: self.mod_person.setCurrentIndex(idx_person)
             idx_ket = self.mod_jenis.findText(debt.keterangan)
@@ -436,13 +436,12 @@ class HutangView(QWidget):
 
         for r in rows:
             d_id = int(self.table_modal.item(r, 0).text())
-            status = self.table_modal.item(r, 6).text()
+            status = self.table_modal.item(r, 7).text() # UPDATE INDEX KARENA NAMBAH KOLOM
             
             if status != 'LUNAS':
-                tot = float(self.table_modal.item(r, 4).text().replace("Rp", "").replace(",", "").strip())
-                bayar = float(self.table_modal.item(r, 5).text().replace("Rp", "").replace(",", "").strip())
+                tot = float(self.table_modal.item(r, 5).text().replace("Rp", "").replace(",", "").strip()) # UPDATE INDEX
+                bayar = float(self.table_modal.item(r, 6).text().replace("Rp", "").replace(",", "").strip()) # UPDATE INDEX
                 sisa = tot - bayar
-                
                 self.selected_modal_debt_ids.append((d_id, sisa))
                 total_sisa += sisa
                 
@@ -455,7 +454,6 @@ class HutangView(QWidget):
             self.btn_mod_lunas.setEnabled(False)
             self.mod_lunas_nom.setValue(0)
 
-    # --- RESET FORM HANDLERS ---
     def reset_barang_form(self):
         self.selected_barang_edit_id = None
         self.selected_barang_debt_ids = []
@@ -474,14 +472,22 @@ class HutangView(QWidget):
         self.selected_modal_debt_ids = []
         self.table_modal.clearSelection()
         self.lbl_title_mod.setText("CATAT PINJAMAN MODAL")
+        # self.mod_person.setCurrentIndex(-1)
+        self.mod_jenis.setCurrentIndex(-1)
+        self.mod_jenis.setCurrentText("")
+        self.mod_qty.setValue(0)
+        self.mod_harga.setValue(0)
+
         self.btn_simpan_mod.setText("SIMPAN BARU")
         self.btn_delete_mod.setEnabled(False)
         self.btn_mod_lunas.setEnabled(False)
         self.lbl_selected_mod.setText("PILIH PINJAMAN UNTUK DEPOSIT (Bisa Lebih Dari 1)")
         self.mod_total.setValue(0)
         self.mod_lunas_nom.setValue(0)
+        
+        # Otomatis buatkan kode produksi urutan selanjutnya
+        self.generate_kode_produksi()
 
-    # --- CRUD ACTIONS (SAVE / DELETE) ---
     def submit_barang_hutang(self):
         pid = self.brg_person.currentData()
         sid = self.brg_sku.currentData()
@@ -512,6 +518,7 @@ class HutangView(QWidget):
         pid = self.mod_person.currentData()
         ket = self.mod_jenis.currentText()
         nom = self.mod_total.value()
+        kode_batch = self.mod_kode_produksi.text().strip() # TANGKAP INPUT KODE BATCH
         if not pid or not ket or nom <= 0: return
         
         try:
@@ -519,13 +526,14 @@ class HutangView(QWidget):
                 debt = self.db.query(DebtEntry).get(self.selected_modal_edit_id)
                 debt.tanggal, debt.person_id, debt.keterangan = self.mod_date.date().toString("yyyy-MM-dd"), pid, ket
                 debt.nominal_hutang = nom
+                debt.kode_produksi = kode_batch # UPDATE KODE BATCH
                 
                 terbayar = self.calculate_paid(debt)
                 if terbayar >= debt.nominal_hutang: debt.status = 'LUNAS'
                 else: debt.status = 'OPEN' if terbayar == 0 else 'PARTIAL'
             else:
                 db_entry = DebtEntry(tipe_hutang='MODAL', tanggal=self.mod_date.date().toString("yyyy-MM-dd"),
-                    person_id=pid, keterangan=ket, nominal_hutang=nom, status='OPEN')
+                    person_id=pid, keterangan=ket, nominal_hutang=nom, status='OPEN', kode_produksi=kode_batch)
                 self.db.add(db_entry)
                 
             self.db.commit()
@@ -533,6 +541,36 @@ class HutangView(QWidget):
             self.load_modal_hutang()
         except Exception as e:
             self.db.rollback()
+            
+    def generate_kode_produksi(self):
+        """Otomatis membuat Kode Produksi berformat PRD-mmyy-XXX"""
+        # Jangan ubah kode jika sedang dalam mode Edit data lama
+        if getattr(self, 'selected_modal_edit_id', None):
+            return
+
+        # Ambil mmyy dari tanggal yang dipilih di form
+        mmyy = self.mod_date.date().toString("MMyy")
+        prefix = f"PRD-{mmyy}-"
+
+        try:
+            # Cari kode produksi terakhir di database yang berawalan PRD-mmyy
+            last_entry = self.db.query(DebtEntry).filter(
+                DebtEntry.kode_produksi.like(f"{prefix}%")
+            ).order_by(DebtEntry.kode_produksi.desc()).first()
+
+            if last_entry and last_entry.kode_produksi:
+                # Ambil 3 angka terakhir, lalu tambah 1
+                last_num = int(last_entry.kode_produksi.split('-')[-1])
+                new_num = last_num + 1
+            else:
+                new_num = 1 # Mulai dari 001 jika bulan ini belum ada data
+
+            # Format dengan 3 digit (contoh: 001, 002)
+            new_kode = f"{prefix}{new_num:03d}"
+            self.mod_kode_produksi.setText(new_kode)
+            
+        except Exception as e:
+            print(f"Error generate kode: {e}")
 
     def delete_barang_hutang(self):
         if not getattr(self, 'selected_barang_edit_id', None): return
@@ -562,7 +600,6 @@ class HutangView(QWidget):
                 self.load_modal_hutang()
             except Exception: self.db.rollback()
 
-    # --- NEW: BATCH WATERFALL PELUNASAN ---
     def submit_barang_pelunasan(self):
         if not self.selected_barang_debt_ids: return
         nominal_uang = self.brg_lunas_nom.value()
@@ -570,7 +607,6 @@ class HutangView(QWidget):
         tgl_bayar = self.brg_lunas_date.date().toString("yyyy-MM-dd")
         
         try:
-            # 1. SAFETY CHECK: Ensure all selected debts belong to the same supplier
             person_ids = set()
             for d_id, _ in self.selected_barang_debt_ids:
                 debt = self.db.query(DebtEntry).get(d_id)
@@ -581,12 +617,9 @@ class HutangView(QWidget):
                 return
                 
             person = self.db.query(Person).get(list(person_ids)[0])
-            
-            # 2. CALCULATE GLOBAL BALANCE
             all_debts = self.db.query(DebtEntry).filter(DebtEntry.person_id == person.id, DebtEntry.tipe_hutang == 'BARANG').all()
             sisa_awal = sum([d.nominal_hutang - self.calculate_paid(d) for d in all_debts])
             
-            # 3. WATERFALL LOOP
             sisa_uang = nominal_uang
             items_for_pdf = []
             
@@ -606,7 +639,6 @@ class HutangView(QWidget):
                     
                     sisa_uang -= bayar_baris_ini
                     
-                    # Log for PDF
                     qty_val = debt.qty if debt.qty and debt.qty > 0 else 1
                     harga_val = debt.nominal_hutang / qty_val
                     
@@ -623,14 +655,11 @@ class HutangView(QWidget):
             sisa_akhir = sisa_awal - nominal_uang
             if sisa_akhir < 0: sisa_akhir = 0
             
-            # 4. GENERATE PDF
             pdf_path = generate_batch_receipt_pdf(person.nama, "BARANG", nominal_uang, items_for_pdf, sisa_awal, sisa_akhir)
             
-            # Refresh UIs
             self.load_barang_terhutang()
             self.reset_barang_form()
             QMessageBox.information(self, "Sukses", f"Pembayaran Batch berhasil! Membuka Nota...")
-            
             os.startfile(pdf_path)
             
         except Exception as e:
@@ -644,7 +673,6 @@ class HutangView(QWidget):
         tgl_bayar = self.mod_lunas_date.date().toString("yyyy-MM-dd")
         
         try:
-            # 1. SAFETY CHECK
             person_ids = set()
             for d_id, _ in self.selected_modal_debt_ids:
                 debt = self.db.query(DebtEntry).get(d_id)
@@ -655,12 +683,9 @@ class HutangView(QWidget):
                 return
                 
             person = self.db.query(Person).get(list(person_ids)[0])
-            
-            # 2. CALCULATE GLOBAL BALANCE
             all_debts = self.db.query(DebtEntry).filter(DebtEntry.person_id == person.id, DebtEntry.tipe_hutang == 'MODAL').all()
             sisa_awal = sum([d.nominal_hutang - self.calculate_paid(d) for d in all_debts])
             
-            # 3. WATERFALL LOOP
             sisa_uang = nominal_uang
             items_for_pdf = []
             
@@ -680,7 +705,6 @@ class HutangView(QWidget):
                     
                     sisa_uang -= bayar_baris_ini
                     
-                    # Log for PDF
                     qty_val = debt.qty if debt.qty and debt.qty > 0 else 1
                     harga_val = debt.nominal_hutang / qty_val
                     
@@ -697,13 +721,11 @@ class HutangView(QWidget):
             sisa_akhir = sisa_awal - nominal_uang
             if sisa_akhir < 0: sisa_akhir = 0
             
-            # 4. GENERATE PDF
             pdf_path = generate_batch_receipt_pdf(person.nama, "MODAL", nominal_uang, items_for_pdf, sisa_awal, sisa_akhir)
             
             self.load_modal_hutang()
             self.reset_modal_form()
             QMessageBox.information(self, "Sukses", f"Deposit Batch berhasil! Membuka Nota...")
-            
             os.startfile(pdf_path)
             
         except Exception as e:

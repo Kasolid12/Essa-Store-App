@@ -1,6 +1,6 @@
 from datetime import datetime, date
 from typing import Optional
-from sqlalchemy import String, Float, Integer, ForeignKey, DateTime, Date
+from sqlalchemy import String, Float, Integer, ForeignKey, DateTime, Date, Column
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from .base import Base
 
@@ -18,6 +18,15 @@ class GarapanRate(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
 
     sku = relationship("SkuMaster")
+    
+class TarifMaster(Base):
+    __tablename__ = "tarif_master"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    kode_sku = Column(String, index=True, unique=True, nullable=False)
+    tarif_jahit = Column(Float, default=0.0)
+    tarif_pengsup_kain = Column(Float, default=0.0)
+    tarif_pengsup_potongan = Column(Float, default=0.0)
 
 class AppSetting(Base):
     __tablename__ = "app_settings"

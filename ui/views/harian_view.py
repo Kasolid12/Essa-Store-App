@@ -12,7 +12,7 @@ from ui.components.buttons import CyberButton
 from ui.theme import Theme
 from data.database import SessionLocal
 from data.models import HasilCutting, DistribusiCutting, PengeluaranOffline, ModalOperasional, SkuMaster, Person
-from data.models.debt import DebtEntry # FIX: Ensure it imports from hutang.py
+from data.models.debt import DebtEntry
 
 class CatatanHarianView(QWidget):
     def __init__(self):
@@ -20,11 +20,9 @@ class CatatanHarianView(QWidget):
         self.db = SessionLocal()
         self.setup_ui()
         
-        # Load initial dropdown data
         self.load_skus()
         self.load_persons()
         
-        # Load tables
         self.load_hasil_cutting()
         self.load_distribusi()
         self.load_offline()
@@ -35,7 +33,6 @@ class CatatanHarianView(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         
-        # --- Page Header ---
         header_layout = QHBoxLayout()
         title = QLabel("CATATAN HARIAN")
         title.setStyleSheet(f"font-size: 24pt; font-weight: bold; color: {Theme.NEON_CYAN};")
@@ -43,7 +40,6 @@ class CatatanHarianView(QWidget):
         header_layout.addStretch()
         layout.addLayout(header_layout)
 
-        # --- Tabs Container ---
         self.tabs = QTabWidget()
         self.tabs.setStyleSheet(f"""
             QTabBar::tab {{
@@ -57,7 +53,6 @@ class CatatanHarianView(QWidget):
             QTabWidget::pane {{ border: 1px solid {Theme.BORDER_DIM}; top: -1px; }}
         """)
 
-        # Build Tabs
         self.setup_tab_cutting()
         self.setup_tab_distribusi()
         self.setup_tab_offline()
@@ -77,7 +72,7 @@ class CatatanHarianView(QWidget):
             completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
 
     # ==========================================
-    # 1. TAB HASIL CUTTING
+    # 1. TAB HASIL CUTTING (DIPERBARUI)
     # ==========================================
     def setup_tab_cutting(self):
         self.tab_cutting = QWidget()
@@ -85,50 +80,48 @@ class CatatanHarianView(QWidget):
         
         form_frame = QFrame()
         form_frame.setObjectName("GridPanel")
-        form_lay = QGridLayout(form_frame) # UPGRADED TO GRID LAYOUT
+        form_lay = QGridLayout(form_frame)
         
         self.date_cut = QDateEdit(QDate.currentDate())
         self.date_cut.setCalendarPopup(True)
+        
+        self.cut_sumber_kain = QComboBox()
+        self.cut_sumber_kain.setStyleSheet(f"background-color: {Theme.BG_VOID}; color: {Theme.NEON_CYAN}; font-weight: bold; padding: 5px;")
         
         self.sku_cut = QComboBox()
         self.sku_cut.setEditable(True)
         self.sku_cut.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
         self.sku_cut.lineEdit().setPlaceholderText("Ketik SKU...")
-        self.sku_cut.setMinimumWidth(300)
         self.setup_completer(self.sku_cut)
         
         self.qty_cut = QSpinBox()
         self.qty_cut.setRange(1, 99999)
         
-        self.cut_sumber_kain = QComboBox()
-        self.cut_sumber_kain.setStyleSheet(f"background-color: {Theme.BG_VOID}; color: {Theme.TEXT_MAIN}; padding: 5px;")
-        
         self.btn_submit_cut = CyberButton("SIMPAN CUTTING")
         self.btn_submit_cut.clicked.connect(self.submit_cutting)
         
-        # Row 0: Tanggal & SKU
+        # Penataan ulang grid agar lebih rapi
         form_lay.addWidget(QLabel("Tanggal:"), 0, 0)
         form_lay.addWidget(self.date_cut, 0, 1)
-        form_lay.addWidget(QLabel("SKU Produk:"), 0, 2)
-        form_lay.addWidget(self.sku_cut, 0, 3)
+        form_lay.addWidget(QLabel("Sumber Kain (Pilih Batch):"), 0, 2)
+        form_lay.addWidget(self.cut_sumber_kain, 0, 3, 1, 3) # Memanjang
 
-        # Row 1: Sumber Kain, Qty & Button
-        form_lay.addWidget(QLabel("Sumber Kain:"), 1, 0)
-        form_lay.addWidget(self.cut_sumber_kain, 1, 1)
-        form_lay.addWidget(QLabel("Qty:"), 1, 2)
-        form_lay.addWidget(self.qty_cut, 1, 3)
-        form_lay.addWidget(self.btn_submit_cut, 1, 4)
+        form_lay.addWidget(QLabel("SKU Produk:"), 1, 0)
+        form_lay.addWidget(self.sku_cut, 1, 1, 1, 2)
+        form_lay.addWidget(QLabel("Qty Hasil Potong:"), 1, 3)
+        form_lay.addWidget(self.qty_cut, 1, 4)
+        form_lay.addWidget(self.btn_submit_cut, 1, 5)
 
         lay.addWidget(form_frame)
 
         self.table_cutting = CyberTable()
-        self.table_cutting.setColumnCount(4)
-        self.table_cutting.setHorizontalHeaderLabels(["ID", "Tanggal", "SKU", "Qty"])
+        self.table_cutting.setColumnCount(5)
+        self.table_cutting.setHorizontalHeaderLabels(["ID", "Tanggal", "Kode Batch", "SKU", "Qty"])
         self.table_cutting.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
         lay.addWidget(self.table_cutting)
 
     # ==========================================
-    # 2. TAB DISTRIBUSI JAHIT
+    # 2. TAB DISTRIBUSI JAHIT (DIPERBARUI)
     # ==========================================
     def setup_tab_distribusi(self):
         self.tab_distribusi = QWidget()
@@ -136,7 +129,7 @@ class CatatanHarianView(QWidget):
         
         form_frame = QFrame()
         form_frame.setObjectName("GridPanel")
-        form_lay = QGridLayout(form_frame) # UPGRADED TO GRID LAYOUT
+        form_lay = QGridLayout(form_frame)
         
         self.date_dist = QDateEdit(QDate.currentDate())
         self.date_dist.setCalendarPopup(True)
@@ -147,47 +140,49 @@ class CatatanHarianView(QWidget):
         self.person_dist.lineEdit().setPlaceholderText("Pilih Penjahit/Pengsup...")
         self.setup_completer(self.person_dist)
 
-        self.sku_dist = QComboBox()
-        self.sku_dist.setEditable(True)
-        self.sku_dist.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
-        self.sku_dist.lineEdit().setPlaceholderText("Ketik SKU...")
-        self.setup_completer(self.sku_dist)
-        
-        self.qty_dist = QSpinBox()
-        self.qty_dist.setRange(1, 99999)
-        
+        # Dropdown untuk memilih Kode Batch
+        self.dist_kode_produksi = QComboBox()
+        self.dist_kode_produksi.setStyleSheet(f"background-color: {Theme.BG_VOID}; color: {Theme.NEON_CYAN}; font-weight: bold; padding: 5px;")
+        self.dist_kode_produksi.currentIndexChanged.connect(self.on_dist_kode_changed)
+
+        # Dropdown List Hasil Cutting
         self.dist_sumber_cutting = QComboBox()
         self.dist_sumber_cutting.setMinimumWidth(300)
         self.dist_sumber_cutting.setStyleSheet(f"background-color: {Theme.BG_VOID}; color: {Theme.TEXT_MAIN}; padding: 5px;")
+        self.dist_sumber_cutting.currentIndexChanged.connect(self.on_dist_sumber_changed)
+        
+        self.qty_dist = QSpinBox()
+        self.qty_dist.setRange(1, 99999)
+        self.qty_dist.setStyleSheet(f"background-color: {Theme.BG_VOID}; color: {Theme.NEON_YELLOW}; font-weight: bold;")
         
         self.btn_submit_dist = CyberButton("SIMPAN DISTRIBUSI")
         self.btn_submit_dist.clicked.connect(self.submit_distribusi)
 
-        # Row 0: Tanggal, Penerima, SKU
+        # Penataan layout grid baru
         form_lay.addWidget(QLabel("Tanggal:"), 0, 0)
         form_lay.addWidget(self.date_dist, 0, 1)
         form_lay.addWidget(QLabel("Penerima:"), 0, 2)
-        form_lay.addWidget(self.person_dist, 0, 3)
-        form_lay.addWidget(QLabel("SKU:"), 0, 4)
-        form_lay.addWidget(self.sku_dist, 0, 5)
+        form_lay.addWidget(self.person_dist, 0, 3, 1, 2)
+        
+        form_lay.addWidget(QLabel("Filter Kode Batch:"), 1, 0)
+        form_lay.addWidget(self.dist_kode_produksi, 1, 1)
+        form_lay.addWidget(QLabel("List Batch Cutting:"), 1, 2)
+        form_lay.addWidget(self.dist_sumber_cutting, 1, 3, 1, 2) # Memanjang
 
-        # Row 1: Batch Cutting, Qty, Button
-        form_lay.addWidget(QLabel("Batch Cutting:"), 1, 0)
-        form_lay.addWidget(self.dist_sumber_cutting, 1, 1, 1, 3) # Span across columns
-        form_lay.addWidget(QLabel("Qty:"), 1, 4)
-        form_lay.addWidget(self.qty_dist, 1, 5)
-        form_lay.addWidget(self.btn_submit_dist, 1, 6)
+        form_lay.addWidget(QLabel("Qty Diambil:"), 2, 2)
+        form_lay.addWidget(self.qty_dist, 2, 3)
+        form_lay.addWidget(self.btn_submit_dist, 2, 4)
 
         lay.addWidget(form_frame)
 
         self.table_distribusi = CyberTable()
-        self.table_distribusi.setColumnCount(6)
-        self.table_distribusi.setHorizontalHeaderLabels(["ID", "Tanggal", "Penerima", "Jenis", "SKU", "Qty"])
+        self.table_distribusi.setColumnCount(7)
+        self.table_distribusi.setHorizontalHeaderLabels(["ID", "Tanggal", "Penerima", "Jenis", "Kode Batch", "SKU", "Qty"])
         self.table_distribusi.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
         lay.addWidget(self.table_distribusi)
 
     # ==========================================
-    # 3. TAB PENGELUARAN OFFLINE
+    # 3. TAB PENGELUARAN OFFLINE (Tetap)
     # ==========================================
     def setup_tab_offline(self):
         self.tab_offline = QWidget()
@@ -245,7 +240,7 @@ class CatatanHarianView(QWidget):
         form_lay.addWidget(QLabel("Total:"), 1, 4)
         form_lay.addWidget(self.total_off, 1, 5)
         
-        form_lay.addWidget(self.btn_submit_off, 1, 6)
+        form_lay.addWidget(self.btn_submit_off, 2, 4, 1, 2)
         lay.addWidget(form_frame)
 
         self.table_offline = CyberTable()
@@ -258,7 +253,7 @@ class CatatanHarianView(QWidget):
         self.total_off.setValue(self.qty_off.value() * self.harga_off.value())
 
     # ==========================================
-    # 4. TAB MODAL OPERASIONAL
+    # 4. TAB MODAL OPERASIONAL (Tetap)
     # ==========================================
     def setup_tab_operasional(self):
         self.tab_operasional = QWidget()
@@ -305,14 +300,19 @@ class CatatanHarianView(QWidget):
     # --- DATA LOADERS ---
     def load_skus(self):
         self.sku_cut.clear()
-        self.sku_dist.clear()
         self.sku_off.clear()
-        skus = self.db.query(SkuMaster).filter(SkuMaster.is_active == 1).order_by(SkuMaster.kode_sku).all()
+        
+        # Tambahkan placeholder agar tidak kosong
+        self.sku_cut.addItem("-- Ketik/Pilih SKU --", None)
+        self.sku_off.addItem("-- Ketik/Pilih SKU --", None)
+        
+        # Hapus filter is_active agar semua data terbaca paksa
+        skus = self.db.query(SkuMaster).order_by(SkuMaster.kode_sku).all()
         for sku in skus:
-            text = f"{sku.kode_sku} - {sku.nama_produk[:30]}"
-            self.sku_cut.addItem(text, sku.id)
-            self.sku_dist.addItem(text, sku.id)
-            self.sku_off.addItem(text, sku.id)
+            # Bungkus dengan str() agar kebal terhadap SKU berupa angka
+            kode_teks = str(sku.kode_sku) if sku.kode_sku else "NO-KODE"
+            self.sku_cut.addItem(kode_teks, sku.id)
+            self.sku_off.addItem(kode_teks, sku.id)
 
     def load_persons(self):
         self.person_dist.clear()
@@ -331,10 +331,17 @@ class CatatanHarianView(QWidget):
         for row, rec in enumerate(records):
             self.table_cutting.setItem(row, 0, QTableWidgetItem(str(rec.id)))
             self.table_cutting.setItem(row, 1, QTableWidgetItem(rec.tanggal))
-            self.table_cutting.setItem(row, 2, QTableWidgetItem(rec.sku.kode_sku if rec.sku else "Unknown"))
+            
+            kode_prod = getattr(rec, 'kode_produksi', None)
+            item_kode = QTableWidgetItem(kode_prod if kode_prod else "-")
+            item_kode.setForeground(Qt.GlobalColor.cyan)
+            self.table_cutting.setItem(row, 2, item_kode)
+            
+            self.table_cutting.setItem(row, 3, QTableWidgetItem(rec.sku.kode_sku if rec.sku else "Unknown"))
+            
             qty_item = QTableWidgetItem(str(rec.qty))
             qty_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-            self.table_cutting.setItem(row, 3, qty_item)
+            self.table_cutting.setItem(row, 4, qty_item)
 
     def load_distribusi(self):
         records = self.db.query(DistribusiCutting).order_by(DistribusiCutting.tanggal.desc(), DistribusiCutting.id.desc()).limit(100).all()
@@ -344,10 +351,16 @@ class CatatanHarianView(QWidget):
             self.table_distribusi.setItem(row, 1, QTableWidgetItem(rec.tanggal))
             self.table_distribusi.setItem(row, 2, QTableWidgetItem(rec.person.nama if rec.person else "Unknown"))
             self.table_distribusi.setItem(row, 3, QTableWidgetItem(rec.jenis))
-            self.table_distribusi.setItem(row, 4, QTableWidgetItem(rec.sku.kode_sku if rec.sku else "Unknown"))
+            
+            kode_prod = getattr(rec, 'kode_produksi', None)
+            item_kode = QTableWidgetItem(kode_prod if kode_prod else "-")
+            item_kode.setForeground(Qt.GlobalColor.cyan)
+            self.table_distribusi.setItem(row, 4, item_kode)
+            
+            self.table_distribusi.setItem(row, 5, QTableWidgetItem(rec.sku.kode_sku if rec.sku else "Unknown"))
             qty_item = QTableWidgetItem(str(rec.qty))
             qty_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-            self.table_distribusi.setItem(row, 5, qty_item)
+            self.table_distribusi.setItem(row, 6, qty_item)
 
     def load_offline(self):
         records = self.db.query(PengeluaranOffline).order_by(PengeluaranOffline.tanggal.desc(), PengeluaranOffline.id.desc()).limit(100).all()
@@ -380,6 +393,69 @@ class CatatanHarianView(QWidget):
             nom_item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
             self.table_operasional.setItem(row, 4, nom_item)
 
+    # --- DYNAMIC DROPDOWNS HANDLING ---
+    def load_sumber_dropdowns(self):
+        """Memuat list kain untuk Hasil Cutting & list kode batch untuk Distribusi."""
+        # 1. Combo Sumber Kain (Menu Cutting)
+        self.cut_sumber_kain.clear()
+        self.cut_sumber_kain.addItem("-- Pilih Sumber Kain --", None)
+        kain_aktif = self.db.query(DebtEntry).filter(
+            DebtEntry.tipe_hutang == 'MODAL', DebtEntry.status_cutting == 'OPEN'
+        ).all()
+        for k in kain_aktif:
+            kode = getattr(k, 'kode_produksi', 'NO-KODE') or 'NO-KODE'
+            self.cut_sumber_kain.addItem(f"[{kode}] {k.keterangan} (Rp {k.nominal_hutang:,.0f})", k.id)
+
+        # 2. Combo Kode Batch (Menu Distribusi)
+        self.dist_kode_produksi.blockSignals(True)
+        self.dist_kode_produksi.clear()
+        self.dist_kode_produksi.addItem("-- Pilih Kode Batch --", None)
+        
+        # Cari semua kode produksi unik dari Hasil Cutting
+        kodes = self.db.query(HasilCutting.kode_produksi).filter(HasilCutting.kode_produksi.isnot(None)).distinct().all()
+        for k in kodes:
+            if k[0]: self.dist_kode_produksi.addItem(k[0], k[0])
+            
+        self.dist_kode_produksi.blockSignals(False)
+        self.on_dist_kode_changed() # Trigger untuk mereset daftar list cutting di sebelahnya
+
+    def on_dist_kode_changed(self):
+        """Otomatis memfilter Batch Cutting saat Kode Batch dipilih."""
+        kode_terpilih = self.dist_kode_produksi.currentData()
+        
+        self.dist_sumber_cutting.blockSignals(True)
+        self.dist_sumber_cutting.clear()
+        self.dist_sumber_cutting.addItem("-- Pilih List Cutting --", None)
+        self.qty_dist.setValue(0)
+        
+        if kode_terpilih:
+            cuttings = self.db.query(HasilCutting).filter(HasilCutting.kode_produksi == kode_terpilih).all()
+            for c in cuttings:
+                # Hitung sisa potongan yang belum didistribusikan
+                distribusis = self.db.query(DistribusiCutting).filter(DistribusiCutting.hasil_cutting_id == c.id).all()
+                terpakai = sum(d.qty for d in distribusis)
+                sisa = c.qty - terpakai
+                
+                if sisa > 0:
+                    sku_nama = c.sku.nama_produk if c.sku else "Unknown SKU"
+                    # Format tampilan: SKU (Sisa 100 dari 150 Pcs)
+                    self.dist_sumber_cutting.addItem(f"{sku_nama} (Sisa {sisa} Pcs)", c.id)
+                    
+        self.dist_sumber_cutting.blockSignals(False)
+
+    def on_dist_sumber_changed(self):
+        """Otomatis mengisi form Qty berdasarkan sisa List Cutting yang dipilih."""
+        cutting_id = self.dist_sumber_cutting.currentData()
+        if cutting_id:
+            c = self.db.query(HasilCutting).get(cutting_id)
+            if c:
+                distribusis = self.db.query(DistribusiCutting).filter(DistribusiCutting.hasil_cutting_id == c.id).all()
+                terpakai = sum(d.qty for d in distribusis)
+                sisa = c.qty - terpakai
+                self.qty_dist.setValue(sisa) # Auto-fill, tapi masih bisa diedit manual oleh user
+        else:
+            self.qty_dist.setValue(0)
+
     # --- SUBMIT ACTIONS ---
     def get_valid_combo_data(self, combobox, error_msg):
         text = combobox.currentText().strip()
@@ -394,22 +470,26 @@ class CatatanHarianView(QWidget):
 
     def submit_cutting(self):
         sku_id = self.get_valid_combo_data(self.sku_cut, "SKU tidak ditemukan! Pilih dari daftar.")
-        if not sku_id: return
-        
         modal_id = self.cut_sumber_kain.currentData()
         
+        if not sku_id or not modal_id: 
+            return QMessageBox.warning(self, "Error", "Pilih Sumber Kain dan SKU!")
+            
         try:
-            # FIX: Convert date object to string and save modal_id
+            # Ambil otomatis Kode Batch dari data hutang kain
+            debt = self.db.query(DebtEntry).get(modal_id)
+            kode_batch_otomatis = getattr(debt, 'kode_produksi', None)
+            
             cut_entry = HasilCutting(
                 tanggal=self.date_cut.date().toString("yyyy-MM-dd"),
                 sku_id=sku_id,
-                qty=self.qty_cut.value(), # FIX: Convert spinbox object to value
-                modal_hutang_id=modal_id            
+                qty=self.qty_cut.value(),
+                modal_hutang_id=modal_id,
+                kode_produksi=kode_batch_otomatis # Simpan otomatis
             )
             self.db.add(cut_entry)
             self.db.commit()
             
-            # Refresh UI
             self.load_hasil_cutting()
             self.load_sumber_dropdowns()
             self.qty_cut.setValue(0)
@@ -422,30 +502,34 @@ class CatatanHarianView(QWidget):
 
     def submit_distribusi(self):
         person_id = self.get_valid_combo_data(self.person_dist, "Penerima tidak ditemukan! Pilih dari daftar.")
-        sku_id = self.get_valid_combo_data(self.sku_dist, "SKU tidak ditemukan!")
-        if not person_id or not sku_id: return
-        
-        # Get Job Type (PENJAHIT / PENGSUP) from database
-        person_record = self.db.query(Person).get(person_id)
-        jenis_pekerjaan = person_record.person_type if person_record else 'PENJAHIT'
-        
         cutting_id = self.dist_sumber_cutting.currentData()
         
+        if not person_id or not cutting_id: 
+            return QMessageBox.warning(self, "Error", "Pilih Penerima dan List Batch Cutting!")
+            
+        qty_input = self.qty_dist.value()
+        if qty_input <= 0:
+            return QMessageBox.warning(self, "Error", "Jumlah Distribusi tidak boleh nol!")
+            
         try:
+            c_record = self.db.query(HasilCutting).get(cutting_id)
+            person_record = self.db.query(Person).get(person_id)
+            jenis_pekerjaan = person_record.person_type if person_record else 'PENJAHIT'
+            
             dist_entry = DistribusiCutting(
-                tanggal=self.date_dist.date().toString("yyyy-MM-dd"), # FIX: String conversion
+                tanggal=self.date_dist.date().toString("yyyy-MM-dd"),
                 person_id=person_id,
-                jenis=jenis_pekerjaan, # FIX: Save the actual type, not the UI Object
-                sku_id=sku_id,
-                qty=self.qty_dist.value(), # FIX: Save value
-                hasil_cutting_id=cutting_id 
+                jenis=jenis_pekerjaan,
+                sku_id=c_record.sku_id, # SKU otomatis diambil dari Hasil Cutting
+                qty=qty_input,
+                hasil_cutting_id=cutting_id,
+                kode_produksi=c_record.kode_produksi # Kode Produksi otomatis
             )
             self.db.add(dist_entry)
             self.db.commit()
             
             self.load_distribusi()
-            self.qty_dist.setValue(0)
-            self.sku_dist.lineEdit().clear()
+            self.on_dist_kode_changed() # Refresh dropdown sisa qty otomatis
             self.person_dist.lineEdit().clear()
             QMessageBox.information(self, "Sukses", "Data Distribusi berhasil disimpan!")
             
@@ -495,33 +579,7 @@ class CatatanHarianView(QWidget):
         except Exception as e:
             self.db.rollback()
             QMessageBox.critical(self, "Error", f"Gagal: {e}")
-    
-    def load_sumber_dropdowns(self):
-        """Memuat data kain yang belum habis (OPEN) dan batch cutting yang tersedia."""
-        
-        # 1. Load Sumber Kain
-        self.cut_sumber_kain.clear()
-        self.cut_sumber_kain.addItem("-- Pilih Sumber Kain --", None)
-        
-        kain_aktif = self.db.query(DebtEntry).filter(
-            DebtEntry.tipe_hutang == 'MODAL',
-            DebtEntry.status_cutting == 'OPEN' 
-        ).all()
-        
-        for k in kain_aktif:
-            label = f"[{k.tanggal}] {k.keterangan} (Rp {k.nominal_hutang:,.0f})"
-            self.cut_sumber_kain.addItem(label, k.id)
-
-        # 2. Load Sumber Batch Cutting
-        self.dist_sumber_cutting.clear()
-        self.dist_sumber_cutting.addItem("-- Pilih Batch Cutting --", None)
-        
-        cutting_aktif = self.db.query(HasilCutting).order_by(HasilCutting.id.desc()).limit(100).all()
-        for c in cutting_aktif:
-            sku_nama = c.sku.nama_produk if c.sku else "Unknown"
-            label = f"Batch #{c.id} | {c.tanggal} - {sku_nama} ({c.qty} Pcs)"
-            self.dist_sumber_cutting.addItem(label, c.id)
-
+            
     def closeEvent(self, event):
         self.db.close()
         super().closeEvent(event)

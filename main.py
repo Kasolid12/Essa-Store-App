@@ -18,6 +18,7 @@ from ui.views.gaji_view import GajiView
 from ui.views.stock_view import StockView
 from ui.views.invoice_view import InvoiceView
 from ui.views.profit_view import ProfitSimulationView
+from ui.views.bi_agent_view import BIAgentView
 from utils.backup_engine import backup_database
 
 class ESSAMainWindow(QMainWindow):
@@ -57,7 +58,7 @@ class ESSAMainWindow(QMainWindow):
         lbl_brand.setStyleSheet(f"font-size: 22pt; font-weight: bold; color: {Theme.NEON_CYAN};")
         lbl_brand.setAlignment(Qt.AlignmentFlag.AlignCenter)
         
-        lbl_sub = QLabel("OPERATIONS OS v2.0")
+        lbl_sub = QLabel("OPERATIONS OS v0.8")
         lbl_sub.setStyleSheet(f"font-size: 9pt; color: {Theme.TEXT_MUTED}; letter-spacing: 2px;")
         lbl_sub.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
@@ -76,6 +77,7 @@ class ESSAMainWindow(QMainWindow):
             ("stok", "STOCK MANAGER"),
             ("invoice", "INVOICE & PIUTANG"),
             ("profit", "PROFIT SIMULATION"),
+            ("agent", "BI AGENT"),
             ("master", "DATA MANAGER")
         ]
 
@@ -150,6 +152,10 @@ class ESSAMainWindow(QMainWindow):
         page_profit = ProfitSimulationView()
         self.pages["profit"] = page_profit
         self.stacked_widget.addWidget(page_profit)
+        
+        page_bi_agent = BIAgentView()
+        self.pages["agent"] = page_bi_agent
+        self.stacked_widget.addWidget(page_bi_agent)
 
         content_layout.addWidget(self.stacked_widget)
         self.main_layout.addWidget(self.content_area)

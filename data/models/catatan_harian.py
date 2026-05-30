@@ -8,7 +8,8 @@ class HasilCutting(Base):
     __tablename__ = "hasil_cutting"
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
-    tanggal: Mapped[str] = mapped_column(String, nullable=False) # Storing as YYYY-MM-DD string is fine for SQLite
+    tanggal: Mapped[str] = mapped_column(String, nullable=False)
+    kode_produksi: Mapped[Optional[str]] = mapped_column(String, index=True)
     sku_id: Mapped[int] = mapped_column(ForeignKey("sku_master.id"), nullable=False)
     qty: Mapped[int] = mapped_column(Integer, nullable=False)
     catatan: Mapped[Optional[str]] = mapped_column(String)
@@ -30,6 +31,7 @@ class DistribusiCutting(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     tanggal: Mapped[str] = mapped_column(String, nullable=False)
+    kode_produksi: Mapped[Optional[str]] = mapped_column(String, index=True)
     person_id: Mapped[int] = mapped_column(ForeignKey("persons.id"), nullable=False, index=True)
     jenis: Mapped[str] = mapped_column(String, nullable=False) # 'PENJAHIT' or 'PENGSUP'
     sku_id: Mapped[int] = mapped_column(ForeignKey("sku_master.id"), nullable=False)

@@ -12,6 +12,8 @@ class DebtEntry(Base):
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     tipe_hutang: Mapped[str] = mapped_column(String, nullable=False, index=True) # 'BARANG' or 'MODAL'
     tanggal: Mapped[str] = mapped_column(String, nullable=False)
+    kode_produksi: Mapped[Optional[str]] = mapped_column(String, index=True)
+    status_cutting: Mapped[Optional[str]] = mapped_column(String, default="OPEN")
     
     person_id: Mapped[int] = mapped_column(ForeignKey("persons.id"), nullable=False, index=True)
     keterangan: Mapped[str] = mapped_column(String, nullable=False)
