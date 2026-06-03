@@ -105,12 +105,14 @@ class HutangView(QWidget):
         self.setup_completer(self.brg_sku)
         
         self.brg_qty = QDoubleSpinBox()
-        self.brg_qty.setRange(0.01, 99999)
-        self.brg_qty.valueChanged.connect(self.calc_brg_total)
+        self.brg_qty.setDecimals(2)
+        self.brg_qty.setRange(0, 9999999.99)
         
         self.brg_harga = QDoubleSpinBox()
         self.brg_harga.setRange(0, 999999999)
         self.brg_harga.setPrefix("Rp ")
+        
+        self.brg_qty.valueChanged.connect(self.calc_brg_total)
         self.brg_harga.valueChanged.connect(self.calc_brg_total)
         
         self.brg_total = QDoubleSpinBox()
@@ -213,12 +215,14 @@ class HutangView(QWidget):
         self.mod_jenis.setEditable(True)
         
         self.mod_qty = QDoubleSpinBox()
-        self.mod_qty.setRange(0.01, 99999)
-        self.mod_qty.valueChanged.connect(self.calc_mod_total)
+        self.mod_qty.setDecimals(2)
+        self.mod_qty.setRange(0, 9999999.99)
         
         self.mod_harga = QDoubleSpinBox()
         self.mod_harga.setRange(0, 999999999)
         self.mod_harga.setPrefix("Rp ")
+        
+        self.mod_qty.valueChanged.connect(self.calc_mod_total)
         self.mod_harga.valueChanged.connect(self.calc_mod_total)
         
         self.mod_total = QDoubleSpinBox()
@@ -354,105 +358,73 @@ class HutangView(QWidget):
             self.table_modal.setItem(r, 7, status_item)
 
     def on_barang_selected(self):
-        sel = self.table_barang.selectedItems()
-        if not sel: 
-            self.reset_barang_form()
-            return
-            
-        rows = list(set([item.row() for item in sel]))
-        self.selected_barang_debt_ids = []
-        total_sisa = 0.0
+        selected = self.table_barang.selectedItems()
+        if not selected: return
+        row = selected[0].row()
+        self.selected_brg_edit_id = int(self.table_barang.item(row, 0).text())
         
-        first_row = rows[0]
-        self.selected_barang_edit_id = int(self.table_barang.item(first_row, 0).text())
-        
-        debt = self.db.query(DebtEntry).get(self.selected_barang_edit_id)
+        debt = self.db.query(DebtEntry).get(self.selected_brg_edit_id)
         if debt:
-            self.lbl_title_brg.setText(f"EDIT HUTANG ID: {debt.id}")
-            self.brg_date.setDate(QDate.fromString(debt.tanggal, "yyyy-MM-dd"))
+            self.date_brg.setDate(QDate.fromString(debt.tanggal, "yyyy-MM-dd"))
+            idx_person = self.person_brg.findData(debt.person_id)
+            if idx_person >= 0: self.person_brg.setCurrentIndex(idx_person)
             
-            idx_person = self.brg_person.findData(debt.person_id)
-            if idx_person >= 0: self.brg_person.setCurrentIndex(idx_person)
-            idx_sku = self.brg_sku.findData(debt.sku_id)
-            if idx_sku >= 0: self.brg_sku.setCurrentIndex(idx_sku)
+            # Matikan signal sementara agar tidak memicu auto-kalkulasi saat form diisi program
+            self.brg_qty.blockSignals(True)
+            self.brg_harga.blockSignals(True)
+            self.brg_total.blockSignals(True)
             
-            self.brg_qty.setValue(debt.qty or 0)
+            # Isi Qty dan Total
+            self.brg_qty.setValue(float(debt.qty or 0.0))
             self.brg_total.setValue(debt.nominal_hutang)
             
-            self.btn_simpan_brg.setText("UPDATE DATA")
-            self.btn_delete_brg.setEnabled(True)
-
-        for r in rows:
-            d_id = int(self.table_barang.item(r, 0).text())
-            status = self.table_barang.item(r, 7).text()
-            
-            if status != 'LUNAS':
-                tot = float(self.table_barang.item(r, 5).text().replace("Rp", "").replace(",", "").strip())
-                bayar = float(self.table_barang.item(r, 6).text().replace("Rp", "").replace(",", "").strip())
-                sisa = tot - bayar
-                self.selected_barang_debt_ids.append((d_id, sisa))
-                total_sisa += sisa
+            # Hitung mundur Harga Satuan (Total dibagi Qty)
+            if debt.qty and debt.qty > 0:
+                self.brg_harga.setValue(debt.nominal_hutang / debt.qty)
+            else:
+                self.brg_harga.setValue(0)
                 
-        if self.selected_barang_debt_ids:
-            self.lbl_selected_brg.setText(f"{len(self.selected_barang_debt_ids)} BARIS DIPILIH | TOTAL SISA: Rp {total_sisa:,.0f}")
-            self.btn_brg_lunas.setEnabled(True)
-            self.brg_lunas_nom.setValue(total_sisa)
-        else:
-            self.lbl_selected_brg.setText("PILIHAN SUDAH LUNAS")
-            self.btn_brg_lunas.setEnabled(False)
-            self.brg_lunas_nom.setValue(0)
+            # Nyalakan signal kembali
+            self.brg_qty.blockSignals(False)
+            self.brg_harga.blockSignals(False)
+            self.brg_total.blockSignals(False)
+
+            self.btn_submit_brg.setText("UPDATE HUTANG BARANG")
+            self.btn_reset_brg.show()
 
     def on_modal_selected(self):
-        sel = self.table_modal.selectedItems()
-        if not sel: 
-            self.reset_modal_form()
-            return
-            
-        rows = list(set([item.row() for item in sel]))
-        self.selected_modal_debt_ids = []
-        total_sisa = 0.0
-        
-        first_row = rows[0]
-        self.selected_modal_edit_id = int(self.table_modal.item(first_row, 0).text())
+        selected = self.table_modal.selectedItems()
+        if not selected: return
+        row = selected[0].row()
+        self.selected_modal_edit_id = int(self.table_modal.item(row, 0).text())
         
         debt = self.db.query(DebtEntry).get(self.selected_modal_edit_id)
         if debt:
-            self.lbl_title_mod.setText(f"EDIT PINJAMAN ID: {debt.id}")
-            self.mod_date.setDate(QDate.fromString(debt.tanggal, "yyyy-MM-dd"))
+            self.date_mod.setDate(QDate.fromString(debt.tanggal, "yyyy-MM-dd"))
+            idx_person = self.person_mod.findData(debt.person_id)
+            if idx_person >= 0: self.person_mod.setCurrentIndex(idx_person)
             
-            # --- Isi Form Kode Batch saat mode edit ---
-            kode_prod = getattr(debt, 'kode_produksi', "")
-            self.mod_kode_produksi.setText(kode_prod if kode_prod else "")
+            # Isi Keterangan
+            self.ket_mod.setText(debt.keterangan)
             
-            idx_person = self.mod_person.findData(debt.person_id)
-            if idx_person >= 0: self.mod_person.setCurrentIndex(idx_person)
-            idx_ket = self.mod_jenis.findText(debt.keterangan)
-            if idx_ket >= 0: self.mod_jenis.setCurrentIndex(idx_ket)
-            else: self.mod_jenis.setCurrentText(debt.keterangan)
+            self.mod_qty.blockSignals(True)
+            self.mod_harga.blockSignals(True)
+            self.mod_total.blockSignals(True)
             
+            self.mod_qty.setValue(float(debt.qty or 0.0))
             self.mod_total.setValue(debt.nominal_hutang)
-            self.btn_simpan_mod.setText("UPDATE DATA")
-            self.btn_delete_mod.setEnabled(True)
-
-        for r in rows:
-            d_id = int(self.table_modal.item(r, 0).text())
-            status = self.table_modal.item(r, 7).text() # UPDATE INDEX KARENA NAMBAH KOLOM
             
-            if status != 'LUNAS':
-                tot = float(self.table_modal.item(r, 5).text().replace("Rp", "").replace(",", "").strip()) # UPDATE INDEX
-                bayar = float(self.table_modal.item(r, 6).text().replace("Rp", "").replace(",", "").strip()) # UPDATE INDEX
-                sisa = tot - bayar
-                self.selected_modal_debt_ids.append((d_id, sisa))
-                total_sisa += sisa
+            if debt.qty and debt.qty > 0:
+                self.mod_harga.setValue(debt.nominal_hutang / debt.qty)
+            else:
+                self.mod_harga.setValue(0)
                 
-        if self.selected_modal_debt_ids:
-            self.lbl_selected_mod.setText(f"{len(self.selected_modal_debt_ids)} BARIS DIPILIH | TOTAL SISA: Rp {total_sisa:,.0f}")
-            self.btn_mod_lunas.setEnabled(True)
-            self.mod_lunas_nom.setValue(total_sisa)
-        else:
-            self.lbl_selected_mod.setText("PILIHAN SUDAH LUNAS")
-            self.btn_mod_lunas.setEnabled(False)
-            self.mod_lunas_nom.setValue(0)
+            self.mod_qty.blockSignals(False)
+            self.mod_harga.blockSignals(False)
+            self.mod_total.blockSignals(False)
+
+            self.btn_submit_mod.setText("UPDATE HUTANG MODAL")
+            self.btn_reset_mod.show()
 
     def reset_barang_form(self):
         self.selected_barang_edit_id = None
@@ -489,58 +461,110 @@ class HutangView(QWidget):
         self.generate_kode_produksi()
 
     def submit_barang_hutang(self):
-        pid = self.brg_person.currentData()
-        sid = self.brg_sku.currentData()
-        nom = self.brg_total.value()
-        if not pid or not sid or nom <= 0: return
+        person_id = self.person_brg.currentData()
+        if not person_id: return QMessageBox.warning(self, "Error", "Pilih Supplier!")
         
+        qty_input = self.brg_qty.value()
+        total_hutang = self.brg_total.value()
+        
+        if qty_input <= 0 or total_hutang <= 0:
+            return QMessageBox.warning(self, "Error", "Qty dan Total tidak boleh nol!")
+            
         try:
-            if self.selected_barang_edit_id:
-                debt = self.db.query(DebtEntry).get(self.selected_barang_edit_id)
-                debt.tanggal, debt.person_id, debt.sku_id = self.brg_date.date().toString("yyyy-MM-dd"), pid, sid
-                debt.qty, debt.nominal_hutang = self.brg_qty.value(), nom
-                
-                terbayar = self.calculate_paid(debt)
-                if terbayar >= debt.nominal_hutang: debt.status = 'LUNAS'
-                else: debt.status = 'OPEN' if terbayar == 0 else 'PARTIAL'
+            if getattr(self, 'selected_brg_edit_id', None):
+                # --- MODE UPDATE ---
+                debt = self.db.query(DebtEntry).get(self.selected_brg_edit_id)
+                debt.tanggal = self.date_brg.date().toString("yyyy-MM-dd")
+                debt.person_id = person_id
+                debt.qty = float(qty_input) # SIMPAN QTY DESIMAL
+                debt.nominal_hutang = total_hutang
+                msg = "Data Hutang Barang berhasil diupdate!"
             else:
-                db_entry = DebtEntry(tipe_hutang='BARANG', tanggal=self.brg_date.date().toString("yyyy-MM-dd"),
-                    person_id=pid, sku_id=sid, qty=self.brg_qty.value(), nominal_hutang=nom, status='OPEN')
-                self.db.add(db_entry)
+                # --- MODE INSERT ---
+                debt = DebtEntry(
+                    tanggal=self.date_brg.date().toString("yyyy-MM-dd"),
+                    person_id=person_id,
+                    tipe_hutang='BARANG',
+                    qty=float(qty_input), # SIMPAN QTY DESIMAL
+                    nominal_hutang=total_hutang,
+                    status='OPEN',
+                    keterangan='Hutang Barang'
+                )
+                self.db.add(debt)
+                msg = "Data Hutang Barang berhasil disimpan!"
                 
             self.db.commit()
-            self.reset_barang_form()
-            self.load_barang_terhutang()
+            self.load_barang()
+            self.reset_barang_form() 
+            QMessageBox.information(self, "Sukses", msg)
         except Exception as e:
             self.db.rollback()
+            QMessageBox.critical(self, "Error", f"Gagal menyimpan: {e}")
 
     def submit_modal_hutang(self):
-        pid = self.mod_person.currentData()
-        ket = self.mod_jenis.currentText()
-        nom = self.mod_total.value()
-        kode_batch = self.mod_kode_produksi.text().strip() # TANGKAP INPUT KODE BATCH
-        if not pid or not ket or nom <= 0: return
+        person_id = self.person_mod.currentData()
+        ket = self.ket_mod.text().strip()
         
+        if not person_id or not ket:
+            return QMessageBox.warning(self, "Error", "Pilih Supplier & Isi Keterangan!")
+            
+        qty_input = self.mod_qty.value()
+        total_hutang = self.mod_total.value()
+        
+        if qty_input <= 0 or total_hutang <= 0:
+            return QMessageBox.warning(self, "Error", "Qty dan Total tidak boleh nol!")
+            
         try:
             if getattr(self, 'selected_modal_edit_id', None):
+                # --- MODE UPDATE ---
                 debt = self.db.query(DebtEntry).get(self.selected_modal_edit_id)
-                debt.tanggal, debt.person_id, debt.keterangan = self.mod_date.date().toString("yyyy-MM-dd"), pid, ket
-                debt.nominal_hutang = nom
-                debt.kode_produksi = kode_batch # UPDATE KODE BATCH
-                
-                terbayar = self.calculate_paid(debt)
-                if terbayar >= debt.nominal_hutang: debt.status = 'LUNAS'
-                else: debt.status = 'OPEN' if terbayar == 0 else 'PARTIAL'
+                debt.tanggal = self.date_mod.date().toString("yyyy-MM-dd")
+                debt.person_id = person_id
+                debt.keterangan = ket
+                debt.qty = float(qty_input) # SIMPAN QTY DESIMAL
+                debt.nominal_hutang = total_hutang
+                msg = "Data Hutang Modal berhasil diupdate!"
             else:
-                db_entry = DebtEntry(tipe_hutang='MODAL', tanggal=self.mod_date.date().toString("yyyy-MM-dd"),
-                    person_id=pid, keterangan=ket, nominal_hutang=nom, status='OPEN', kode_produksi=kode_batch)
-                self.db.add(db_entry)
+                # --- MODE INSERT ---
+                # Generate Kode Produksi Otomatis (opsional, sesuaikan fungsi Anda)
+                count_today = self.db.query(DebtEntry).filter(
+                    DebtEntry.tipe_hutang == 'MODAL',
+                    DebtEntry.tanggal == self.date_mod.date().toString("yyyy-MM-dd")
+                ).count() + 1
+                kode_prod = f"PRD-{self.date_mod.date().toString('MMdd')}-{count_today:03d}"
+                
+                debt = DebtEntry(
+                    tanggal=self.date_mod.date().toString("yyyy-MM-dd"),
+                    person_id=person_id,
+                    tipe_hutang='MODAL',
+                    keterangan=ket,
+                    qty=float(qty_input), # SIMPAN QTY DESIMAL
+                    nominal_hutang=total_hutang,
+                    status='OPEN',
+                    kode_produksi=kode_prod
+                )
+                self.db.add(debt)
+                msg = "Data Hutang Modal berhasil disimpan!"
                 
             self.db.commit()
+            self.load_modal()
             self.reset_modal_form()
-            self.load_modal_hutang()
+            QMessageBox.information(self, "Sukses", msg)
         except Exception as e:
             self.db.rollback()
+            QMessageBox.critical(self, "Error", f"Gagal menyimpan: {e}")
+    
+    def calc_brg_total(self):
+        """Menghitung total otomatis untuk Tab Barang"""
+        qty = self.brg_qty.value()
+        harga = self.brg_harga.value()
+        self.brg_total.setValue(qty * harga)
+
+    def calc_mod_total(self):
+        """Menghitung total otomatis untuk Tab Modal"""
+        qty = self.mod_qty.value()
+        harga = self.mod_harga.value()
+        self.mod_total.setValue(qty * harga)
             
     def generate_kode_produksi(self):
         """Otomatis membuat Kode Produksi berformat PRD-mmyy-XXX"""

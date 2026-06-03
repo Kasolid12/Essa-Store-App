@@ -20,7 +20,7 @@ class DebtEntry(Base):
     
     # Only applicable for 'BARANG'
     sku_id: Mapped[Optional[int]] = mapped_column(ForeignKey("sku_master.id"))
-    qty: Mapped[Optional[int]] = mapped_column(Integer)
+    qty: Mapped[Optional[float]] = mapped_column(Float)
     
     nominal_hutang: Mapped[float] = mapped_column(Float, nullable=False)
     status: Mapped[str] = mapped_column(String, default="OPEN", index=True) # 'OPEN', 'PARTIAL', 'LUNAS'

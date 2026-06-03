@@ -3,7 +3,7 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QTabWidget, 
     QTableWidgetItem, QHeaderView, QComboBox, QSpinBox, 
     QDateEdit, QMessageBox, QFrame, QCompleter, QDoubleSpinBox, 
-    QGridLayout, QLineEdit
+    QGridLayout, QLineEdit, QAbstractItemView
 )
 from PySide6.QtCore import Qt, QDate
 
@@ -18,6 +18,11 @@ class CatatanHarianView(QWidget):
     def __init__(self):
         super().__init__()
         self.db = SessionLocal()
+        self.selected_cut_id = None
+        self.selected_dist_id = None
+        self.selected_off_id = None
+        self.selected_op_id = None
+        
         self.setup_ui()
         
         self.load_skus()
@@ -100,6 +105,10 @@ class CatatanHarianView(QWidget):
         self.btn_submit_cut = CyberButton("SIMPAN CUTTING")
         self.btn_submit_cut.clicked.connect(self.submit_cutting)
         
+        self.btn_reset_cut = CyberButton("BATAL EDIT")
+        self.btn_reset_cut.clicked.connect(self.reset_cutting_form)
+        self.btn_reset_cut.hide() # Sembunyikan saat mode normal
+        
         # Penataan ulang grid agar lebih rapi
         form_lay.addWidget(QLabel("Tanggal:"), 0, 0)
         form_lay.addWidget(self.date_cut, 0, 1)
@@ -111,6 +120,7 @@ class CatatanHarianView(QWidget):
         form_lay.addWidget(QLabel("Qty Hasil Potong:"), 1, 3)
         form_lay.addWidget(self.qty_cut, 1, 4)
         form_lay.addWidget(self.btn_submit_cut, 1, 5)
+        form_lay.addWidget(self.btn_reset_cut, 1, 6)
 
         lay.addWidget(form_frame)
 
@@ -118,6 +128,9 @@ class CatatanHarianView(QWidget):
         self.table_cutting.setColumnCount(5)
         self.table_cutting.setHorizontalHeaderLabels(["ID", "Tanggal", "Kode Batch", "SKU", "Qty"])
         self.table_cutting.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        self.table_cutting.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.table_cutting.itemSelectionChanged.connect(self.on_cutting_selected)
+        lay.addWidget(self.table_cutting)
         lay.addWidget(self.table_cutting)
 
     # ==========================================
@@ -157,6 +170,10 @@ class CatatanHarianView(QWidget):
         
         self.btn_submit_dist = CyberButton("SIMPAN DISTRIBUSI")
         self.btn_submit_dist.clicked.connect(self.submit_distribusi)
+        
+        self.btn_reset_dist = CyberButton("BATAL EDIT")
+        self.btn_reset_dist.clicked.connect(self.reset_cutting_form)
+        self.btn_reset_dist.hide()
 
         # Penataan layout grid baru
         form_lay.addWidget(QLabel("Tanggal:"), 0, 0)
@@ -172,6 +189,7 @@ class CatatanHarianView(QWidget):
         form_lay.addWidget(QLabel("Qty Diambil:"), 2, 2)
         form_lay.addWidget(self.qty_dist, 2, 3)
         form_lay.addWidget(self.btn_submit_dist, 2, 4)
+        form_lay.addWidget(self.btn_reset_dist, 2, 5)
 
         lay.addWidget(form_frame)
 
@@ -179,6 +197,8 @@ class CatatanHarianView(QWidget):
         self.table_distribusi.setColumnCount(7)
         self.table_distribusi.setHorizontalHeaderLabels(["ID", "Tanggal", "Penerima", "Jenis", "Kode Batch", "SKU", "Qty"])
         self.table_distribusi.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        self.table_distribusi.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.table_distribusi.itemSelectionChanged.connect(self.on_distribusi_selected)
         lay.addWidget(self.table_distribusi)
 
     # ==========================================
@@ -225,6 +245,10 @@ class CatatanHarianView(QWidget):
         
         self.btn_submit_off = CyberButton("SIMPAN PENJUALAN")
         self.btn_submit_off.clicked.connect(self.submit_offline)
+        
+        self.btn_reset_off = CyberButton("BATAL EDIT")
+        self.btn_reset_off.clicked.connect(self.reset_offline_form)
+        self.btn_reset_off.hide()
 
         form_lay.addWidget(QLabel("Tanggal:"), 0, 0)
         form_lay.addWidget(self.date_off, 0, 1)
@@ -239,6 +263,7 @@ class CatatanHarianView(QWidget):
         form_lay.addWidget(self.harga_off, 1, 3)
         form_lay.addWidget(QLabel("Total:"), 1, 4)
         form_lay.addWidget(self.total_off, 1, 5)
+        form_lay.addWidget(self.btn_reset_off, 1, 6)
         
         form_lay.addWidget(self.btn_submit_off, 2, 4, 1, 2)
         lay.addWidget(form_frame)
@@ -247,6 +272,8 @@ class CatatanHarianView(QWidget):
         self.table_offline.setColumnCount(7)
         self.table_offline.setHorizontalHeaderLabels(["ID", "Tanggal", "Pembeli", "SKU", "Qty", "Harga", "Total"])
         self.table_offline.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        self.table_offline.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.table_offline.itemSelectionChanged.connect(self.on_offline_selected)
         lay.addWidget(self.table_offline)
 
     def calculate_offline_total(self):
@@ -278,6 +305,10 @@ class CatatanHarianView(QWidget):
         
         self.btn_submit_op = CyberButton("SIMPAN PENGELUARAN")
         self.btn_submit_op.clicked.connect(self.submit_operasional)
+        
+        self.btn_reset_op = CyberButton("BATAL EDIT")
+        self.btn_reset_op.clicked.connect(self.reset_operasional_form)
+        self.btn_reset_op.hide()
 
         form_lay.addWidget(QLabel("Tanggal:"))
         form_lay.addWidget(self.date_op)
@@ -288,6 +319,7 @@ class CatatanHarianView(QWidget):
         form_lay.addWidget(QLabel("  Nominal Total:"))
         form_lay.addWidget(self.nominal_op)
         form_lay.addWidget(self.btn_submit_op)
+        form_lay.addWidget(self.btn_reset_op)
         
         lay.addWidget(form_frame)
 
@@ -295,6 +327,8 @@ class CatatanHarianView(QWidget):
         self.table_operasional.setColumnCount(5)
         self.table_operasional.setHorizontalHeaderLabels(["ID", "Tanggal", "Kategori", "Keterangan", "Nominal / Total"])
         self.table_operasional.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
+        self.table_operasional.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.table_operasional.itemSelectionChanged.connect(self.on_operasional_selected)
         lay.addWidget(self.table_operasional)
 
     # --- DATA LOADERS ---
@@ -417,7 +451,178 @@ class CatatanHarianView(QWidget):
             if k[0]: self.dist_kode_produksi.addItem(k[0], k[0])
             
         self.dist_kode_produksi.blockSignals(False)
-        self.on_dist_kode_changed() # Trigger untuk mereset daftar list cutting di sebelahnya
+        self.on_dist_kode_changed()
+    
+    # ==========================================
+    # FUNGSI HANDLER EDIT & RESET CUTTING
+    # ==========================================
+    def on_cutting_selected(self):
+        selected = self.table_cutting.selectedItems()
+        if not selected: return
+        row = selected[0].row()
+        
+        # Ambil ID dari kolom pertama (hidden/visible index 0)
+        self.selected_cut_id = int(self.table_cutting.item(row, 0).text())
+        
+        # Ambil data dari DB untuk mengisi form
+        record = self.db.query(HasilCutting).get(self.selected_cut_id)
+        if record:
+            self.date_cut.setDate(QDate.fromString(record.tanggal, "yyyy-MM-dd"))
+            
+            idx_sumber = self.cut_sumber_kain.findData(record.modal_hutang_id)
+            if idx_sumber >= 0: self.cut_sumber_kain.setCurrentIndex(idx_sumber)
+            
+            idx_sku = self.sku_cut.findData(record.sku_id)
+            if idx_sku >= 0: self.sku_cut.setCurrentIndex(idx_sku)
+            
+            self.qty_cut.setValue(record.qty)
+            
+            # Ubah state UI
+            self.btn_submit_cut.setText("UPDATE CUTTING")
+            self.btn_reset_cut.show()
+
+    def reset_cutting_form(self):
+        self.selected_cut_id = None
+        self.qty_cut.setValue(0)
+        self.cut_sumber_kain.setCurrentIndex(0)
+        self.sku_cut.setCurrentIndex(0)
+        self.btn_submit_cut.setText("SIMPAN CUTTING")
+        self.btn_reset_cut.hide()
+        self.table_cutting.clearSelection()
+    
+    # ==========================================
+    # FUNGSI HANDLER EDIT & RESET DISTRIBUSI
+    # ==========================================
+    def on_distribusi_selected(self):
+        selected = self.table_distribusi.selectedItems()
+        if not selected: return
+        row = selected[0].row()
+        
+        # Ambil ID Distribusi
+        self.selected_dist_id = int(self.table_distribusi.item(row, 0).text())
+        
+        record = self.db.query(DistribusiCutting).get(self.selected_dist_id)
+        if record:
+            # 1. Set Tanggal & Penerima
+            self.date_dist.setDate(QDate.fromString(record.tanggal, "yyyy-MM-dd"))
+            idx_person = self.person_dist.findData(record.person_id)
+            if idx_person >= 0: self.person_dist.setCurrentIndex(idx_person)
+            
+            # 2. Block Signal agar tidak memicu reset Qty otomatis saat dropdown berubah
+            self.dist_kode_produksi.blockSignals(True)
+            self.dist_sumber_cutting.blockSignals(True)
+            
+            # 3. Set Kode Produksi
+            idx_kode = self.dist_kode_produksi.findData(record.kode_produksi)
+            if idx_kode >= 0: self.dist_kode_produksi.setCurrentIndex(idx_kode)
+            
+            # 4. KUSTOMISASI DROPDOWN SUMBER CUTTING
+            # Kita buat manual list dropdown-nya agar item yang sedang diedit Qty-nya 
+            # dikembalikan dulu ke pool sisa, sehingga bisa terbaca di form.
+            self.dist_sumber_cutting.clear()
+            self.dist_sumber_cutting.addItem("-- Pilih List Cutting --", None)
+            
+            cuttings = self.db.query(HasilCutting).filter(HasilCutting.kode_produksi == record.kode_produksi).all()
+            for c in cuttings:
+                distribusis = self.db.query(DistribusiCutting).filter(DistribusiCutting.hasil_cutting_id == c.id).all()
+                # Abaikan distribusi yang sedang di-edit ini saat menghitung barang terpakai
+                terpakai = sum(d.qty for d in distribusis if d.id != self.selected_dist_id)
+                sisa_tersedia_untuk_edit = c.qty - terpakai
+                
+                if sisa_tersedia_untuk_edit > 0:
+                    sku_nama = c.sku.nama_produk if c.sku else "Unknown SKU"
+                    self.dist_sumber_cutting.addItem(f"{sku_nama} (Max {sisa_tersedia_untuk_edit} Pcs)", c.id)
+            
+            # 5. Set Dropdown Sumber Cutting
+            idx_sumber = self.dist_sumber_cutting.findData(record.hasil_cutting_id)
+            if idx_sumber >= 0: self.dist_sumber_cutting.setCurrentIndex(idx_sumber)
+            
+            # Buka kembali signal
+            self.dist_kode_produksi.blockSignals(False)
+            self.dist_sumber_cutting.blockSignals(False)
+            
+            # 6. Set Qty 
+            self.qty_dist.setValue(record.qty)
+            
+            # 7. Update UI Buttons
+            self.btn_submit_dist.setText("UPDATE DISTRIBUSI")
+            self.btn_reset_dist.show()
+
+    def reset_distribusi_form(self):
+        self.selected_dist_id = None
+        self.qty_dist.setValue(0)
+        self.person_dist.setCurrentIndex(0)
+        self.dist_kode_produksi.setCurrentIndex(0) # Ini otomatis akan mereset list sumber cutting
+        self.btn_submit_dist.setText("SIMPAN DISTRIBUSI")
+        self.btn_reset_dist.hide()
+        self.table_distribusi.clearSelection()
+
+    # ==========================================
+    # FUNGSI HANDLER EDIT & RESET OFFLINE
+    # ==========================================
+    def on_offline_selected(self):
+        selected = self.table_offline.selectedItems()
+        if not selected: return
+        row = selected[0].row()
+        self.selected_off_id = int(self.table_offline.item(row, 0).text())
+        
+        record = self.db.query(PengeluaranOffline).get(self.selected_off_id)
+        if record:
+            self.date_off.setDate(QDate.fromString(record.tanggal, "yyyy-MM-dd"))
+            
+            idx_person = self.person_off.findData(record.person_id)
+            if idx_person >= 0: self.person_off.setCurrentIndex(idx_person)
+            
+            idx_sku = self.sku_off.findData(record.sku_id)
+            if idx_sku >= 0: self.sku_off.setCurrentIndex(idx_sku)
+            
+            self.qty_off.setValue(record.qty)
+            self.harga_off.setValue(record.harga_satuan)
+            self.total_off.setValue(record.total)
+            
+            self.btn_submit_off.setText("UPDATE PENJUALAN")
+            self.btn_reset_off.show()
+
+    def reset_offline_form(self):
+        self.selected_off_id = None
+        self.qty_off.setValue(0)
+        self.harga_off.setValue(0)
+        self.person_off.setCurrentIndex(0)
+        self.sku_off.setCurrentIndex(0)
+        self.btn_submit_off.setText("SIMPAN PENJUALAN")
+        self.btn_reset_off.hide()
+        self.table_offline.clearSelection()
+
+    # ==========================================
+    # FUNGSI HANDLER EDIT & RESET OPERASIONAL
+    # ==========================================
+    def on_operasional_selected(self):
+        selected = self.table_operasional.selectedItems()
+        if not selected: return
+        row = selected[0].row()
+        self.selected_op_id = int(self.table_operasional.item(row, 0).text())
+        
+        record = self.db.query(ModalOperasional).get(self.selected_op_id)
+        if record:
+            self.date_op.setDate(QDate.fromString(record.tanggal, "yyyy-MM-dd"))
+            
+            idx_jenis = self.jenis_op.findText(record.jenis)
+            if idx_jenis >= 0: self.jenis_op.setCurrentIndex(idx_jenis)
+            
+            self.ket_op.setText(record.keterangan)
+            self.nominal_op.setValue(record.nominal)
+            
+            self.btn_submit_op.setText("UPDATE PENGELUARAN")
+            self.btn_reset_op.show()
+
+    def reset_operasional_form(self):
+        self.selected_op_id = None
+        self.ket_op.clear()
+        self.nominal_op.setValue(0)
+        self.jenis_op.setCurrentIndex(0)
+        self.btn_submit_op.setText("SIMPAN PENGELUARAN")
+        self.btn_reset_op.hide()
+        self.table_operasional.clearSelection()
 
     def on_dist_kode_changed(self):
         """Otomatis memfilter Batch Cutting saat Kode Batch dipilih."""
@@ -476,25 +681,36 @@ class CatatanHarianView(QWidget):
             return QMessageBox.warning(self, "Error", "Pilih Sumber Kain dan SKU!")
             
         try:
-            # Ambil otomatis Kode Batch dari data hutang kain
             debt = self.db.query(DebtEntry).get(modal_id)
             kode_batch_otomatis = getattr(debt, 'kode_produksi', None)
             
-            cut_entry = HasilCutting(
-                tanggal=self.date_cut.date().toString("yyyy-MM-dd"),
-                sku_id=sku_id,
-                qty=self.qty_cut.value(),
-                modal_hutang_id=modal_id,
-                kode_produksi=kode_batch_otomatis # Simpan otomatis
-            )
-            self.db.add(cut_entry)
+            if self.selected_cut_id:
+                # --- MODE UPDATE ---
+                cut_entry = self.db.query(HasilCutting).get(self.selected_cut_id)
+                cut_entry.tanggal = self.date_cut.date().toString("yyyy-MM-dd")
+                cut_entry.sku_id = sku_id
+                cut_entry.qty = self.qty_cut.value()
+                cut_entry.modal_hutang_id = modal_id
+                cut_entry.kode_produksi = kode_batch_otomatis
+                msg = "Data Cutting berhasil diperbarui!"
+            else:
+                # --- MODE INSERT ---
+                cut_entry = HasilCutting(
+                    tanggal=self.date_cut.date().toString("yyyy-MM-dd"),
+                    sku_id=sku_id,
+                    qty=self.qty_cut.value(),
+                    modal_hutang_id=modal_id,
+                    kode_produksi=kode_batch_otomatis
+                )
+                self.db.add(cut_entry)
+                msg = "Data Cutting berhasil disimpan!"
+                
             self.db.commit()
             
             self.load_hasil_cutting()
             self.load_sumber_dropdowns()
-            self.qty_cut.setValue(0)
-            self.sku_cut.lineEdit().clear()
-            QMessageBox.information(self, "Sukses", "Data Cutting berhasil disimpan!")
+            self.reset_cutting_form() # Panggil reset form
+            QMessageBox.information(self, "Sukses", msg)
             
         except Exception as e:
             self.db.rollback()
@@ -516,22 +732,38 @@ class CatatanHarianView(QWidget):
             person_record = self.db.query(Person).get(person_id)
             jenis_pekerjaan = person_record.person_type if person_record else 'PENJAHIT'
             
-            dist_entry = DistribusiCutting(
-                tanggal=self.date_dist.date().toString("yyyy-MM-dd"),
-                person_id=person_id,
-                jenis=jenis_pekerjaan,
-                sku_id=c_record.sku_id, # SKU otomatis diambil dari Hasil Cutting
-                qty=qty_input,
-                hasil_cutting_id=cutting_id,
-                kode_produksi=c_record.kode_produksi # Kode Produksi otomatis
-            )
-            self.db.add(dist_entry)
+            if getattr(self, 'selected_dist_id', None):
+                # --- MODE UPDATE ---
+                dist_entry = self.db.query(DistribusiCutting).get(self.selected_dist_id)
+                dist_entry.tanggal = self.date_dist.date().toString("yyyy-MM-dd")
+                dist_entry.person_id = person_id
+                dist_entry.jenis = jenis_pekerjaan
+                dist_entry.sku_id = c_record.sku_id
+                dist_entry.qty = qty_input
+                dist_entry.hasil_cutting_id = cutting_id
+                dist_entry.kode_produksi = c_record.kode_produksi
+                msg = "Data Distribusi berhasil diperbarui!"
+            else:
+                # --- MODE INSERT ---
+                dist_entry = DistribusiCutting(
+                    tanggal=self.date_dist.date().toString("yyyy-MM-dd"),
+                    person_id=person_id,
+                    jenis=jenis_pekerjaan,
+                    sku_id=c_record.sku_id, 
+                    qty=qty_input,
+                    hasil_cutting_id=cutting_id,
+                    kode_produksi=c_record.kode_produksi 
+                )
+                self.db.add(dist_entry)
+                msg = "Data Distribusi berhasil disimpan!"
+
             self.db.commit()
             
             self.load_distribusi()
             self.on_dist_kode_changed() # Refresh dropdown sisa qty otomatis
+            self.reset_distribusi_form() # Reset Form setelah sukses
             self.person_dist.lineEdit().clear()
-            QMessageBox.information(self, "Sukses", "Data Distribusi berhasil disimpan!")
+            QMessageBox.information(self, "Sukses", msg)
             
         except Exception as e:
             self.db.rollback()
@@ -541,15 +773,35 @@ class CatatanHarianView(QWidget):
         person_id = self.get_valid_combo_data(self.person_off, "Pembeli tidak ditemukan! Pilih Klien dari daftar.")
         sku_id = self.get_valid_combo_data(self.sku_off, "SKU tidak ditemukan!")
         if not person_id or not sku_id: return
+        
         try:
-            record = PengeluaranOffline(
-                tanggal=self.date_off.date().toString("yyyy-MM-dd"), person_id=person_id, sku_id=sku_id,
-                qty=self.qty_off.value(), harga_satuan=self.harga_off.value(), total=self.total_off.value(), catatan="Manual Input"
-            )
-            self.db.add(record)
+            if self.selected_off_id:
+                record = self.db.query(PengeluaranOffline).get(self.selected_off_id)
+                record.tanggal = self.date_off.date().toString("yyyy-MM-dd")
+                record.person_id = person_id
+                record.sku_id = sku_id
+                record.qty = self.qty_off.value()
+                record.harga_satuan = self.harga_off.value()
+                record.total = self.total_off.value()
+                msg = "Data Penjualan berhasil diperbarui!"
+            else:
+                record = PengeluaranOffline(
+                    tanggal=self.date_off.date().toString("yyyy-MM-dd"), 
+                    person_id=person_id, 
+                    sku_id=sku_id,
+                    qty=self.qty_off.value(), 
+                    harga_satuan=self.harga_off.value(), 
+                    total=self.total_off.value(), 
+                    catatan="Manual Input"
+                )
+                self.db.add(record)
+                msg = "Data Penjualan berhasil disimpan!"
+                
             self.db.commit()
             self.load_offline()
-            self.qty_off.setValue(0); self.harga_off.setValue(0); self.sku_off.lineEdit().clear(); self.person_off.lineEdit().clear()
+            self.reset_offline_form()
+            QMessageBox.information(self, "Sukses", msg)
+            
         except Exception as e:
             self.db.rollback()
             QMessageBox.critical(self, "Error", f"Gagal: {e}")
@@ -563,22 +815,35 @@ class CatatanHarianView(QWidget):
             return
             
         try:
-            record = ModalOperasional(
-                tanggal=self.date_op.date().toString("yyyy-MM-dd"),
-                jenis=self.jenis_op.currentText(),
-                keterangan=keterangan,
-                nominal=nominal,
-                catatan="Manual Input"
-            )
-            self.db.add(record)
+            if getattr(self, 'selected_op_id', None):
+                # --- MODE UPDATE ---
+                record = self.db.query(ModalOperasional).get(self.selected_op_id)
+                record.tanggal = self.date_op.date().toString("yyyy-MM-dd")
+                record.jenis = self.jenis_op.currentText()
+                record.keterangan = keterangan
+                record.nominal = nominal
+                msg = "Data Pengeluaran Operasional berhasil diperbarui!"
+            else:
+                # --- MODE INSERT ---
+                record = ModalOperasional(
+                    tanggal=self.date_op.date().toString("yyyy-MM-dd"),
+                    jenis=self.jenis_op.currentText(),
+                    keterangan=keterangan,
+                    nominal=nominal,
+                    catatan="Manual Input"
+                )
+                self.db.add(record)
+                msg = "Data Pengeluaran Operasional berhasil disimpan!"
+                
             self.db.commit()
             
             self.load_operasional()
-            self.ket_op.clear()
-            self.nominal_op.setValue(0)
+            self.reset_operasional_form() # Panggil fungsi reset form setelah sukses
+            QMessageBox.information(self, "Sukses", msg)
+            
         except Exception as e:
             self.db.rollback()
-            QMessageBox.critical(self, "Error", f"Gagal: {e}")
+            QMessageBox.critical(self, "Error", f"Gagal menyimpan: {e}")
             
     def closeEvent(self, event):
         self.db.close()
