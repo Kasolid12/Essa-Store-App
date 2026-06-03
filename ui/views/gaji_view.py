@@ -503,10 +503,20 @@ class GajiView(QWidget):
             self.table_bon_history.setItem(row, 1, jenis_item)
             
             self.table_bon_history.setItem(row, 2, QTableWidgetItem(str(m.sumber)))
-            self.table_bon_history.setItem(row, 3, QTableWidgetItem(str(m.keterangan) if m.keterangan else "-"))
-            nom_item = QTableWidgetItem(f"Rp {m.nominal:,.0f}")
+            ket_text = getattr(m, 'keterangan', "-") 
+            self.table_bon_history.setItem(row, 3, QTableWidgetItem(str(ket_text)))
+            try:
+                # Ambil data (coba 'nominal', atau fallback ke 'jumlah')
+                raw_val = getattr(m, 'nominal', getattr(m, 'jumlah', 0))
+                # Konversi paksa menjadi angka, jika kosong jadikan 0
+                val = float(raw_val) if raw_val not in [None, ""] else 0.0
+            except Exception:
+                val = 0.0
+                
+            nom_item = QTableWidgetItem(f"Rp {val:,.0f}")
             nom_item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
             self.table_bon_history.setItem(row, 4, nom_item)
+            # -----------------------------------
 
     def submit_manual_bon(self):
         person_id = self.cb_bon_person.currentData()
@@ -538,7 +548,7 @@ class GajiView(QWidget):
             
             movement = BonMovement(
                 person_id=person_id, tanggal=tgl_sekarang, tipe=tipe_mov, 
-                nominal=nominal, sumber="UPDATE_MANUAL"
+                nominal=nominal, sumber=f"MANUAL: {catatan}"
             )
             self.db.add(movement)
             self.db.commit()
