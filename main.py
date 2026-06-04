@@ -20,6 +20,9 @@ from ui.views.invoice_view import InvoiceView
 from ui.views.profit_view import ProfitSimulationView
 from ui.views.bi_agent_view import BIAgentView
 from utils.backup_engine import backup_database
+from data.database import engine
+from data.models.base import Base
+import data.models
 
 class ESSAMainWindow(QMainWindow):
     def __init__(self):
@@ -174,6 +177,7 @@ class ESSAMainWindow(QMainWindow):
         event.accept()
 
 if __name__ == "__main__":
+    Base.metadata.create_all(bind=engine)
     app = QApplication(sys.argv)
     window = ESSAMainWindow()
     window.show()
