@@ -9,88 +9,282 @@ from data.database import SessionLocal
 from data.models import SalaryRun
 from data.models import SalaryRun, PengeluaranOffline # <--- Add PengeluaranOffline here
 
+def format_rupiah(angka):
+    """Fungsi helper untuk format mata uang Indonesia (Titik untuk ribuan)"""
+    try:
+        return f"Rp {int(float(angka)):,.0f}".replace(",", ".")
+    except:
+        return "Rp 0"
+
 def generate_salary_slip(salary_run_id):
-    """Generates an Industrial-style PDF salary slip."""
+    """
+    Generator PDF Cerdas: 
+    Otomatis menyesuaikan tata letak untuk Penjahit, Pengsup, atau Karyawan.
+    """
+    from reportlab.lib.pagesizes import A5
+    from reportlab.pdfgen import canvas
+    from reportlab.lib.units import mm
+    from data.database import SessionLocal
+    from data.models.salary import SalaryRun
+    import os
+
     db = SessionLocal()
     try:
-        # 1. Fetch the data
+        # 1. Tarik data utama
         run = db.query(SalaryRun).get(salary_run_id)
         if not run:
-            raise ValueError("Salary Run ID not found.")
-            
+            raise ValueError("Data Salary Run ID tidak ditemukan di database.")
+
         person = run.person
-        
-        # 2. Setup the File Path
-        # Creates a 'exports/slips' folder in your root directory if it doesn't exist
+        nama_person = person.nama.upper() if person else "UNKNOWN"
+        id_person = person.id if person else "-"
+
+        # 2. Siapkan Folder Ekspor
         export_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "exports", "slips")
         os.makedirs(export_dir, exist_ok=True)
-        
-        filename = f"SLIP_{person.nama.replace(' ', '_')}_{run.tanggal_proses}.pdf"
+
+        # Nama file rapi sesuai tipe
+        filename = f"SLIP_{run.tipe}_{nama_person.replace(' ', '_')}_{run.tanggal_proses}.pdf"
         filepath = os.path.join(export_dir, filename)
 
-        # 3. Initialize the PDF Canvas (A5 Landscape)
-        c = canvas.Canvas(filepath, pagesize=(210*mm, 148*mm))
-        
-        # --- DRAWING THE INDUSTRIAL AESTHETIC ---
-        
-        # Outer Border (Sharp, industrial frame)
-        c.setLineWidth(2)
-        c.rect(10*mm, 10*mm, 190*mm, 128*mm)
-        c.setLineWidth(1)
-        c.rect(12*mm, 12*mm, 186*mm, 124*mm) # Inner accent line
-        
-        # HEADER
-        c.setFont("Courier-Bold", 18)
-        c.drawString(16*mm, 122*mm, "ESSA STORE // PAYROLL MANIFEST")
-        
+        # 3. Inisialisasi Kertas (A5 Portrait)
+        c = canvas.Canvas(filepath, pagesize=A5)
+        width, height = A5
+
+        # --- FUNGSI BANTUAN UNTUK MENGGAMBAR HEADER HALAMAN ---
+        def draw_header():
+            c.setFont("Courier-Bold", 12)
+            if run.tipe == "BORONGAN_PENJAHIT":
+                title = "NOTA GAJI PENJAHIT - ESSA STORE"
+            elif run.tipe == "PENGSUP":
+                title = "NOTA TOTALAN PENGSUP - ESSA STORE"
+            else:
+                title = "ESSA STORE - SLIP GAJI"
+
+            c.drawString(10*mm, height - 15*mm, title)
+            c.setFont("Courier", 10)
+            
+            # Format header menyesuaikan jenis slip
+            if run.tipe == "PASUKAN_KARYAWAN":
+                c.drawString(10*mm, height - 25*mm, f"ID Karyawan : {id_person}")
+                c.drawString(10*mm, height - 30*mm, f"Nama        : {nama_person}")
+                c.drawString(10*mm, height - 35*mm, f"Tanggal     : {run.tanggal_proses}")
+            else:
+                c.drawString(10*mm, height - 25*mm, f"NAMA    : {nama_person}")
+                c.drawString(10*mm, height - 30*mm, f"TANGGAL : {run.tanggal_proses}")
+
+        # Jalankan Header di Halaman Pertama
+        draw_header()
+        y = height - 45*mm
+
+        # ========================================================
+        # BAGIAN 1A: TABEL RINCIAN (Khusus PENJAHIT)
+        # ========================================================
+        if run.tipe == "BORONGAN_PENJAHIT":
+            c.setFont("Courier-Bold", 9)
+            c.drawString(10*mm, y, "JENIS GARAPAN")
+            c.drawString(75*mm, y, "Qty")
+            c.drawString(95*mm, y, "HARGA")
+            c.drawRightString(138*mm, y, "TOTAL")
+            
+            c.line(10*mm, y-2*mm, 138*mm, y-2*mm) # Garis pembatas
+            y -= 7*mm
+
+            c.setFont("Courier", 9)
+            for item in run.line_items:
+                nama_garapan = item.model_code or "Barang"
+                if len(nama_garapan) > 23:
+                    nama_garapan = nama_garapan[:20] + "..."
+
+                qty_str = f"{int(item.qty)}" if item.qty.is_integer() else f"{item.qty:g}"
+
+                c.drawString(10*mm, y, nama_garapan)
+                c.drawString(75*mm, y, qty_str)
+                c.drawString(95*mm, y, format_rupiah(item.tarif_per_pcs).replace("Rp ", ""))
+                c.drawRightString(138*mm, y, format_rupiah(item.subtotal))
+
+                y -= 5*mm
+                if y < 45*mm: # Buat halaman baru jika kertas habis
+                    c.showPage()
+                    draw_header()
+                    y = height - 45*mm
+                    c.setFont("Courier", 9)
+
+        # ========================================================
+        # BAGIAN 1B: TABEL RINCIAN (Khusus PENGSUP)
+        # ========================================================
+        elif run.tipe == "PENGSUP":
+            list_barang = []
+            list_potong = []
+            mentah_item = None
+            
+            # Deteksi item dari database berdasarkan TAG Rahasia
+            for item in run.line_items:
+                code = str(item.model_code)
+                if code == "[KAIN_MENTAH]": mentah_item = item
+                elif code.startswith("[POTONG]"): list_potong.append(item)
+                else: list_barang.append(item)
+
+            # --- SEKSI 1: BARANG JADI ---
+            c.setFont("Courier-Bold", 9)
+            c.drawString(10*mm, y, "1. DAFTAR KAIN/BARANG JADI")
+            y -= 6*mm
+
+            c.drawString(10*mm, y, "NAMA BARANG")
+            c.drawString(75*mm, y, "Qty")
+            c.drawString(95*mm, y, "HARGA")
+            c.drawRightString(138*mm, y, "JUMLAH")
+            c.line(10*mm, y-2*mm, 138*mm, y-2*mm)
+            y -= 6*mm
+
+            c.setFont("Courier", 9)
+            total_barang = 0
+            for item in list_barang:
+                nama = str(item.model_code).replace("[BARANG] ", "")
+                if len(nama) > 23: nama = nama[:20] + "..."
+                qty_str = f"{int(item.qty)}" if item.qty.is_integer() else f"{item.qty:g}"
+
+                c.drawString(10*mm, y, nama)
+                c.drawString(75*mm, y, qty_str)
+                c.drawString(95*mm, y, format_rupiah(item.tarif_per_pcs).replace("Rp ", ""))
+                c.drawRightString(138*mm, y, format_rupiah(item.subtotal))
+                total_barang += item.subtotal
+
+                y -= 5*mm
+                if y < 45*mm: c.showPage(); draw_header(); y = height - 45*mm; c.setFont("Courier", 9)
+
+            c.setFont("Courier-Bold", 9)
+            c.drawString(10*mm, y, "TOTAL BARANG")
+            c.drawRightString(138*mm, y, format_rupiah(total_barang))
+            y -= 6*mm
+
+            # --- SEKSI PENGURANGAN KAIN ---
+            total_setelah_kain = total_barang
+            if mentah_item:
+                c.setFont("Courier", 9)
+                qty_str = f"{int(mentah_item.qty)}" if mentah_item.qty.is_integer() else f"{mentah_item.qty:g}"
+                c.drawString(10*mm, y, "KAIN")
+                c.drawString(75*mm, y, qty_str)
+                c.drawString(95*mm, y, format_rupiah(mentah_item.tarif_per_pcs).replace("Rp ", ""))
+                c.drawRightString(138*mm, y, format_rupiah(abs(mentah_item.subtotal))) 
+                
+                total_setelah_kain -= abs(mentah_item.subtotal)
+                y -= 5*mm
+                c.setFont("Courier-Bold", 9)
+                c.drawString(10*mm, y, "TOTAL BARANG - KAIN")
+                c.drawRightString(138*mm, y, format_rupiah(total_setelah_kain))
+                y -= 6*mm
+
+            # --- SEKSI 2: DAFTAR POTONGAN ---
+            total_potongan = 0
+            if list_potong:
+                y -= 2*mm
+                c.setFont("Courier-Bold", 9)
+                c.drawString(10*mm, y, "2. DAFTAR POTONGAN")
+                y -= 6*mm
+                
+                c.drawString(10*mm, y, "NAMA BARANG")
+                c.drawString(75*mm, y, "Qty")
+                c.drawString(95*mm, y, "HARGA")
+                c.drawRightString(138*mm, y, "JUMLAH")
+                c.line(10*mm, y-2*mm, 138*mm, y-2*mm)
+                y -= 6*mm
+
+                c.setFont("Courier", 9)
+                for item in list_potong:
+                    nama = str(item.model_code).replace("[POTONG] ", "")
+                    if len(nama) > 23: nama = nama[:20] + "..."
+                    qty_str = f"{int(item.qty)}" if item.qty.is_integer() else f"{item.qty:g}"
+
+                    c.drawString(10*mm, y, nama)
+                    c.drawString(75*mm, y, qty_str)
+                    c.drawString(95*mm, y, format_rupiah(item.tarif_per_pcs).replace("Rp ", ""))
+                    c.drawRightString(138*mm, y, format_rupiah(item.subtotal))
+                    total_potongan += item.subtotal
+
+                    y -= 5*mm
+                    if y < 45*mm: c.showPage(); draw_header(); y = height - 45*mm; c.setFont("Courier", 9)
+
+                c.setFont("Courier-Bold", 9)
+                c.drawString(10*mm, y, "TOTAL POTONGAN")
+                c.drawRightString(138*mm, y, format_rupiah(total_potongan))
+                y -= 6*mm
+
+            # --- GRAND TOTAL KESELURUHAN DIBAYAR ---
+            grand_total = total_setelah_kain + total_potongan
+            y -= 4*mm
+            c.setFont("Courier-Bold", 10)
+            c.drawString(10*mm, y, "TOTAL KESELURUHAN DIBAYAR")
+            c.drawRightString(138*mm, y, format_rupiah(grand_total))
+            y -= 8*mm
+
+        # ========================================================
+        # BAGIAN 1C: RINCIAN JAM KERJA (Khusus Karyawan)
+        # ========================================================
+        elif run.tipe == "PASUKAN_KARYAWAN":
+            catatan = run.catatan or "Tidak ada catatan jam kerja"
+            c.setFont("Courier-Bold", 10)
+            c.drawString(10*mm, y, "RINCIAN JAM KERJA (MINGGUAN):")
+            y -= 6*mm
+            c.setFont("Courier", 9)
+            # Menampilkan agregat mingguan: Hadir, Normal, Lembur
+            c.drawString(15*mm, y, f"- {catatan}")
+            y -= 10*mm
+
+        # ========================================================
+        # BAGIAN 2: RINGKASAN FINANSIAL & KASBON (Buku Besar)
+        # ========================================================
+        c.line(10*mm, y, 138*mm, y) # Garis pembatas akhir rincian
+        y -= 6*mm
+
+        c.setFont("Courier-Bold", 10)
+        c.drawString(10*mm, y, "TOTAL GAJI KOTOR")
+        c.drawString(75*mm, y, ":")
+        c.drawRightString(138*mm, y, format_rupiah(run.gaji_kotor))
+        y -= 6*mm
+
+        # Bagian Kasbon (Hanya tampil jika ada riwayat bon)
         c.setFont("Courier", 9)
-        c.drawString(16*mm, 116*mm, f"GENERATED: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-        c.drawString(16*mm, 112*mm, f"SYSTEM ID: TXN-{run.id:06d}")
-        
-        # Divider Line
-        c.line(16*mm, 108*mm, 194*mm, 108*mm)
+        if run.bon_lama > 0 or run.potong_bon > 0:
+            c.drawString(10*mm, y, "Sisa Bon Lama")
+            c.drawString(75*mm, y, ":")
+            c.drawRightString(138*mm, y, format_rupiah(run.bon_lama))
+            y -= 5*mm
 
-        # EMPLOYEE DETAILS
-        c.setFont("Courier-Bold", 12)
-        c.drawString(16*mm, 98*mm, "RECIPIENT DATA")
-        c.setFont("Courier", 11)
-        c.drawString(16*mm, 90*mm, f"NAMA      : {person.nama.upper()}")
-        c.drawString(16*mm, 84*mm, f"KATEGORI  : {person.person_type}")
-        c.drawString(16*mm, 78*mm, f"PERIODE   : {run.periode_mulai} to {run.periode_akhir}")
+            c.drawString(10*mm, y, "POTONGAN MINGGU INI")
+            c.drawString(75*mm, y, ":")
+            c.drawRightString(138*mm, y, f"- {format_rupiah(run.potong_bon)}")
+            y -= 5*mm
 
-        # FINANCIAL DETAILS BOX
-        c.rect(100*mm, 68*mm, 94*mm, 35*mm) # Right-side box
-        c.setFont("Courier-Bold", 12)
-        c.drawString(104*mm, 96*mm, "FINANCIAL SUMMARY")
-        
-        c.setFont("Courier", 11)
-        c.drawString(104*mm, 90*mm, "GAJI KOTOR (BASE) :")
-        c.drawRightString(190*mm, 90*mm, f"Rp {run.gaji_kotor:,.0f}")
-        
-        c.drawString(104*mm, 82*mm, "POTONGAN KASBON   :")
-        c.drawRightString(190*mm, 82*mm, f"- Rp {run.potong_bon:,.0f}")
-        
-        # Separator inside box
-        c.line(104*mm, 76*mm, 190*mm, 76*mm)
-        
-        # Net Salary
-        c.setFont("Courier-Bold", 14)
-        c.drawString(104*mm, 70*mm, "GAJI BERSIH :")
-        c.drawRightString(190*mm, 70*mm, f"Rp {run.gaji_bersih:,.0f}")
+        c.line(75*mm, y+2*mm, 138*mm, y+2*mm) # Garis Total Bersih
+        y -= 6*mm
 
-        # FOOTER / SIGNATURES
-        c.setFont("Courier", 10)
-        c.drawString(20*mm, 40*mm, "AUTHORIZED BY (ADMIN)")
-        c.line(20*mm, 25*mm, 70*mm, 25*mm)
-        
-        c.drawString(140*mm, 40*mm, "RECEIVED BY")
-        c.line(140*mm, 25*mm, 190*mm, 25*mm)
-        c.drawString(140*mm, 20*mm, person.nama.upper())
+        c.setFont("Courier-Bold", 10)
+        c.drawString(10*mm, y, "TOTAL GAJI BERSIH (DITERIMA)")
+        c.drawString(75*mm, y, ":")
+        c.drawRightString(138*mm, y, format_rupiah(run.gaji_bersih))
+        y -= 8*mm
 
-        # Save the PDF
+        if run.sisa_bon_akhir > 0:
+            c.setFont("Courier-Bold", 9)
+            c.drawString(10*mm, y, "SISA BON AKHIR (BELUM LUNAS)")
+            c.drawString(75*mm, y, ":")
+            c.drawRightString(138*mm, y, format_rupiah(run.sisa_bon_akhir))
+            y -= 10*mm
+
+        # ========================================================
+        # BAGIAN 3: FOOTER
+        # ========================================================
+        c.setFont("Courier-Oblique", 8)
+        # Cetak tepat di tengah bawah kertas
+        c.drawCentredString(width/2.0, 15*mm, "*Nota ini dicetak secara otomatis oleh Sistem Essa Store")
+
         c.save()
         return filepath
         
+    except Exception as e:
+        print(f"PDF Engine Error: {e}")
+        raise e
     finally:
         db.close()
 

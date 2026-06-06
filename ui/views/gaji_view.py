@@ -9,6 +9,7 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Qt, QDate
 from PySide6.QtGui import QColor
+from PySide6.QtWidgets import QAbstractItemView
 from ui.components.tables import CyberTable
 from ui.components.buttons import CyberButton
 from ui.theme import Theme
@@ -31,6 +32,18 @@ class GajiView(QWidget):
         self.load_dropdowns()
         self.load_karyawan_data() # NEW: Load data karyawan di awal
 
+    def parse_waktu(self, v):
+        """Helper untuk membaca waktu aneh dari Excel mesin fingerprint"""
+        v_str = str(v).strip()
+        if v_str in ['', 'nan', 'None']: return None
+        if ":" in v_str:
+            try: return (int(v_str.split(":")[0]) * 60 + int(v_str.split(":")[1])) / 1440.0
+            except: return None
+        try:
+            if 0.0 <= float(v_str) <= 1.0: return float(v_str)
+        except: pass
+        return None
+    
     def setup_ui(self):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -219,7 +232,7 @@ class GajiView(QWidget):
         mid_lay = QHBoxLayout(mid_frame)
         
         self.psup_tipe = QComboBox()
-        self.psup_tipe.addItems(["Setor Barang Jadi (Kain)", "Setor Potongan (Pcs)"])
+        self.psup_tipe.addItems(["Setor Barang Jadi (Kain)", "Setor Potongan (Pcs)", "Potongan Kain Mentah (Kg)"])
         self.psup_tipe.currentIndexChanged.connect(self.on_psup_input_changed)
 
         self.psup_sku = QComboBox()
@@ -349,11 +362,17 @@ class GajiView(QWidget):
         # -- Smart Grid Table --
         self.table_pasukan = CyberTable()
         self.table_pasukan.cellChanged.connect(self.on_pasukan_cell_edited)
-        self.table_pasukan.setColumnCount(9)
+        self.table_pasukan.setColumnCount(11)
         self.table_pasukan.setHorizontalHeaderLabels([
-            "ID", "Nama Karyawan", "Hadir\n(Hari)", "Menit\nNormal", "Menit\nLembur",
-            "Gaji Kotor\n(Otomatis)", "Sisa Kasbon\n(Info)", "Potong Kasbon\n(Ketik Manual)", "Gaji Bersih\n(Otomatis)"
+            "ID", "Nama Karyawan", "Hadir", 
+            "Menit Normal", "Tarif Normal",
+            "Menit Lembur", "Tarif Lembur",
+            "Gaji Kotor", "Bon Lama", "Potong Kasbon", "Gaji Bersih"
         ])
+        self.table_pasukan.setEditTriggers(QAbstractItemView.EditTrigger.DoubleClicked | QAbstractItemView.EditTrigger.AnyKeyPressed)
+        # Hubungkan kembali ke fungsi cell edited yang sudah kita amankan
+        self.table_pasukan.cellChanged.connect(self.on_pasukan_cell_edited)
+        
         self.table_pasukan.hideColumn(0) # Sembunyikan kolom ID database
         self.table_pasukan.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
         # Warna background header
@@ -365,15 +384,18 @@ class GajiView(QWidget):
         hint = QLabel("💡 TIPS: Klik ganda pada kolom Hadir, Menit, atau Potong Kasbon untuk mengedit nilainya. Lalu klik tombol 'Hitung Ulang'.")
         hint.setStyleSheet(f"color: {Theme.NEON_PINK}; font-style: italic;")
         
-        btn_recalc = CyberButton("🔄 HITUNG ULANG TABEL")
-        btn_recalc.clicked.connect(self.recalc_pasukan)
+        # UBAH KODE TOMBOL REFRESH MENJADI INI:
+        btn_reset_pasukan = CyberButton("KOSONGKAN TABEL")
+        btn_reset_pasukan.setStyleSheet(f"background-color: {Theme.NEON_PINK}; color: #FFF; font-weight: bold;")
+        # Kita panggil fungsi load_karyawan_data karena fungsi itu otomatis me-reset semua baris jadi 0
+        btn_reset_pasukan.clicked.connect(self.load_karyawan_data)
         
         btn_save_pasukan = CyberButton("SIMPAN & CETAK SEMUA SLIP")
         btn_save_pasukan.setStyleSheet(f"background-color: {Theme.NEON_CYAN}; color: #000; font-weight: bold; padding: 8px 15px;")
         btn_save_pasukan.clicked.connect(self.submit_pasukan)
 
         bot_lay.addWidget(hint); bot_lay.addStretch()
-        bot_lay.addWidget(btn_recalc)
+        bot_lay.addWidget(btn_reset_pasukan)
         bot_lay.addWidget(btn_save_pasukan)
         lay.addLayout(bot_lay)
     
@@ -846,125 +868,183 @@ class GajiView(QWidget):
 
     def submit_pengsup(self):
         person_id = self.psup_person.currentData()
-        if not person_id: return QMessageBox.warning(self, "Error", "Pilih nama Pengsup!")
-        if not self.cart_pengsup and self.psup_kain_qty.value() <= 0: return
-            
-        bon_lama, tambah_bon, potong_bon = self.psup_bon_lama.value(), self.psup_tambah_bon.value(), self.psup_potong_bon.value()
-        total_pemasukan = sum(item['total'] for item in self.cart_pengsup)
-        kain_mentah_tot = self.psup_kain_qty.value() * self.psup_kain_harga.value()
-        
-        gaji_kotor = total_pemasukan - kain_mentah_tot
+        if not person_id or not self.cart_pengsup: 
+            return QMessageBox.warning(self, "Error", "Pilih pengsup & pastikan daftar garapan tidak kosong!")
+
+        # 1. AMBIL NILAI KAIN MENTAH DARI UI ANDA
+        kain_qty = self.psup_kain_qty.value()
+        kain_harga = self.psup_kain_harga.value()
+        kain_total = kain_qty * kain_harga
+
+        # 2. HITUNG BARANG JADI VS JASA POTONGAN
+        total_pemasukan_barang = 0.0
+        total_potongan_jasa = 0.0
+
+        for item in self.cart_pengsup:
+            tipe_garapan = item.get('tipe', '')
+            if "Potongan" in tipe_garapan:
+                total_potongan_jasa += item['total'] # Jasa Potong
+            else:
+                total_pemasukan_barang += item['total'] # Barang Jadi
+
+        # 3. RUMUS GRAND TOTAL SESUAI GAMBAR ANDA:
+        gaji_kotor = total_pemasukan_barang - kain_total + total_potongan_jasa
+
+        bon_lama = self.psup_bon_lama.value()
+        tambah_bon = self.psup_tambah_bon.value()
+        potong_bon = self.psup_potong_bon.value()
         gaji_bersih = gaji_kotor - potong_bon
         sisa_bon_akhir = bon_lama + tambah_bon - potong_bon
-        
-        if potong_bon > bon_lama: 
-            return QMessageBox.warning(self, "Error", "Potongan tidak boleh melebihi Sisa Bon Lama!")
-        if potong_bon > max(0, gaji_kotor):
-            return QMessageBox.warning(self, "Error", "Potongan kasbon tidak boleh melebihi Total Diterima!")
 
         try:
             tanggal_str = self.psup_date.date().toString("yyyy-MM-dd")
-            note_user = self.psup_catatan_manual.text().strip()
-            detail_kain = f"Potong Kain Mentah: Qty {self.psup_kain_qty.value()}, Tot Rp{kain_mentah_tot:,.0f}"
-            full_note = f"{detail_kain} | Ket: {note_user}" if note_user else detail_kain
-            
-            run = SalaryRun(tipe="PENGSUP", person_id=person_id, tanggal_proses=tanggal_str, gaji_kotor=gaji_kotor,
-                            bon_lama=bon_lama, tambah_bon=tambah_bon, potong_bon=potong_bon, gaji_bersih=gaji_bersih, 
-                            sisa_bon_akhir=sisa_bon_akhir, catatan=full_note)
-            self.db.add(run); self.db.flush() 
-            
+            run = SalaryRun(
+                tipe="PENGSUP", person_id=person_id, tanggal_proses=tanggal_str, 
+                gaji_kotor=gaji_kotor, bon_lama=bon_lama, tambah_bon=tambah_bon, 
+                potong_bon=potong_bon, gaji_bersih=gaji_bersih, sisa_bon_akhir=sisa_bon_akhir
+            )
+            self.db.add(run)
+            self.db.flush()
+
+            # --- 4. SIMPAN KAIN MENTAH SEBAGAI ITEM RAHASIA KE SQLITE ---
+            if kain_total > 0:
+                line_mentah = SalaryLineItem(
+                    salary_run_id=run.id, sku_id=None,
+                    model_code="[KAIN_MENTAH]", # TAG Rahasia
+                    qty=kain_qty, tarif_per_pcs=kain_harga, subtotal=-kain_total
+                )
+                self.db.add(line_mentah)
+
+            # --- 5. SIMPAN TABEL GRID ---
             for item in self.cart_pengsup:
-                tipe_db = 'PEMASUKAN_KAIN' if 'Kain' in item['tipe'] else 'POTONGAN_PCS'
-                sku_db = self.db.query(SkuMaster).filter(SkuMaster.kode_sku == item['sku_kode']).first()
+                tipe_garapan = item.get('tipe', '')
+                prefix = "[POTONG] " if "Potongan" in tipe_garapan else "[BARANG] "
                 
-                recon = PengsupReconciliation(salary_run_id=run.id, tipe=tipe_db, sku_id=sku_db.id if sku_db else None,
-                                              qty=item['qty'], harga_per_unit=item['harga'], subtotal=item['total'])
-                self.db.add(recon)
-                
+                line = SalaryLineItem(
+                    salary_run_id=run.id, sku_id=item.get('sku_id'),
+                    model_code=prefix + item['nama_garapan'], 
+                    qty=item['qty'], tarif_per_pcs=item['harga'], subtotal=item['total']
+                )
+                self.db.add(line)
+
+            # Update Kasbon
             balance = self.db.query(BonBalance).filter(BonBalance.person_id == person_id).first()
             if not balance:
                 balance = BonBalance(person_id=person_id, saldo=0)
                 self.db.add(balance)
-                
+
             if tambah_bon > 0:
                 self.db.add(BonMovement(person_id=person_id, tanggal=tanggal_str, tipe="TAMBAH", nominal=tambah_bon, sumber="PAYROLL_PENGSUP"))
                 balance.saldo += tambah_bon
             if potong_bon > 0:
                 self.db.add(BonMovement(person_id=person_id, tanggal=tanggal_str, tipe="POTONG_GAJI", nominal=potong_bon, sumber="PAYROLL_PENGSUP"))
                 balance.saldo -= potong_bon
-                
-            self.db.commit()
-            try:
-                pdf_path = generate_salary_slip(run.id) # Cukup passing run.id
-                if pdf_path and os.path.exists(pdf_path):
-                    os.startfile(pdf_path)
-            except Exception as pdf_err:
-                QMessageBox.warning(self, "PDF Error", f"Data tersimpan, tapi PDF gagal dicetak: {pdf_err}")
-            # ------------------------------------
 
-            QMessageBox.information(self, "Sukses", "Data totalan pengsup berhasil disimpan dan PDF dicetak!")
-            
-            self.cart_pengsup.clear(); self.psup_catatan_manual.clear()
+            self.db.commit()
+
+            # Trigger PDF
+            from utils.pdf_engine import generate_salary_slip
+            pdf_path = generate_salary_slip(run.id)
+            if pdf_path and os.path.exists(pdf_path): os.startfile(pdf_path)
+
+            QMessageBox.information(self, "Sukses", "Data berhasil disimpan dan PDF dibuat!")
+            self.cart_pengsup.clear(); self.refresh_pengsup_table()
             self.psup_kain_qty.setValue(0); self.psup_kain_harga.setValue(0)
             self.psup_tambah_bon.setValue(0); self.psup_potong_bon.setValue(0)
-            self.refresh_pengsup_table(); self.on_pengsup_selected() 
-            
+
         except Exception as e:
-            self.db.rollback(); QMessageBox.critical(self, "Error", f"Gagal: {e}")
-    
+            self.db.rollback()
+            QMessageBox.critical(self, "Error", f"Gagal Database: {e}")
+
     def import_excel_pengsup(self):
-        """Fitur baru untuk import baris setoran Pengsup secara massal"""
-        file_path, _ = QFileDialog.getOpenFileName(self, "Import Setoran Pengsup", "", "Excel Files (*.xlsx *.xls *.csv)")
+        """
+        Smart Import Draft Pengsup:
+        Kebal terhadap perubahan nama sheet dan pergeseran baris metadata (Autopilot Scanning).
+        """
+        file_path, _ = QFileDialog.getOpenFileName(self, "Import Setoran Pengsup", "", "Excel Files (*.xlsx *.xls)")
         if not file_path: return
 
         try:
-            # 1. Baca File
-            df = pd.read_excel(file_path) if file_path.endswith('.xls') or file_path.endswith('.xlsx') else pd.read_csv(file_path)
+            import openpyxl
+            wb = openpyxl.load_workbook(file_path, data_only=True)
             
-            # Standarisasi kolom (Hapus spasi, jadikan huruf kecil)
-            df.columns = df.columns.astype(str).str.strip().str.lower()
-            
-            # 2. Cari kolom yang relevan secara otomatis
-            col_sku = next((c for c in df.columns if 'sku' in c or 'garapan' in c or 'jenis' in c or 'nama' in c), None)
-            col_qty = next((c for c in df.columns if 'qty' in c or 'jumlah' in c), None)
-            col_harga = next((c for c in df.columns if 'harga' in c or 'tarif' in c), None)
-            col_tipe = next((c for c in df.columns if 'tipe' in c or 'kategori' in c), None) # Opsional
-
-            if not col_sku or not col_qty:
-                return QMessageBox.warning(self, "Format Salah", "Sistem butuh kolom bernama 'SKU/Nama' dan 'Qty' di file Excel Pengsup.")
-
-            # 3. Proses input baris demi baris
-            for _, row in df.iterrows():
-                nama_sku = str(row[col_sku]).strip()
-                qty = float(row[col_qty])
+            # [SOLUSI AMAN]: Cek jika sheet Daftar_Pemasukan ada, jika tidak ada pakai sheet aktif pertama
+            if "Daftar_Pemasukan" in wb.sheetnames:
+                ws = wb["Daftar_Pemasukan"]
+            else:
+                ws = wb.active # Terhindar dari error "File Salah" akibat nama sheet berubah
                 
-                # Cek tipe setoran di excel (Kain / Potongan), default ke Potongan jika tidak ada
-                tipe_setoran = str(row[col_tipe]).strip() if col_tipe and pd.notnull(row[col_tipe]) else "Setor Potongan (Pcs)"
-                is_kain = "kain" in tipe_setoran.lower()
-                
-                # Jika harga tidak ada di excel, cari menggunakan fungsi AI fallback milik Anda
-                harga = float(row[col_harga]) if col_harga and pd.notnull(row[col_harga]) else 0
-                
-                if harga == 0:
-                    harga = self.get_pengsup_tarif_cerdas(nama_sku, is_kain)
+            # Inisialisasi nilai penampung awal
+            kain_qty = 0.0
+            kain_harga = 0.0
+            tambah_bon = 0.0
+            potong_bon = 0.0
+            data_start_row = 8 # Fallback default posisi daftar barang
 
-                # Masukkan ke keranjang Pengsup jika valid
-                if harga > 0 and qty > 0:
-                    self.cart_pengsup.append({
-                        "tipe": "Setor Barang Jadi (Kain)" if is_kain else "Setor Potongan (Pcs)", 
-                        "sku_kode": nama_sku, 
-                        "nama_garapan": nama_sku, 
-                        "qty": qty, 
-                        "harga": harga, 
-                        "total": qty * harga
-                    })
+            # ========================================================
+            # LOGIKA SCANNING SPASIAL (Mencari koordinat teks metadata)
+            # ========================================================
+            # Kita scan 20 baris teratas dan 5 kolom pertama untuk mencari keyword
+            for r in range(1, min(20, ws.max_row + 1)):
+                for c in range(1, min(5, ws.max_column + 1)):
+                    cell_val = str(ws.cell(r, c).value or "").strip().lower()
+                    
+                    if not cell_val: continue
+                    
+                    # Bersihkan dan ambil nilai angka di sebelah kanan cell keyword (c + 1)
+                    if "kain_qty" in cell_val or "kain qty" in cell_val:
+                        val_raw = str(ws.cell(r, c+1).value or "0").replace(',', '')
+                        kain_qty = float(val_raw) if val_raw else 0.0
+                    elif "kain_harga" in cell_val or "harga kain" in cell_val:
+                        val_raw = str(ws.cell(r, c+1).value or "0").replace('Rp', '').replace(',', '').strip()
+                        kain_harga = float(val_raw) if val_raw else 0.0
+                    elif "bon_tambah" in cell_val or "tambah bon" in cell_val:
+                        val_raw = str(ws.cell(r, c+1).value or "0").replace('Rp', '').replace(',', '').strip()
+                        tambah_bon = float(val_raw) if val_raw else 0.0
+                    elif "bon_potong" in cell_val or "potong bon" in cell_val:
+                        val_raw = str(ws.cell(r, c+1).value or "0").replace('Rp', '').replace(',', '').strip()
+                        potong_bon = float(val_raw) if val_raw else 0.0
+                    elif "sku" in cell_val or "nama barang" in cell_val or "jenis garapan" in cell_val:
+                        data_start_row = r # Catat di baris mana tabel barang jadi dimulai
 
-            # Refresh tabel
+            # Masukkan hasil temuan angka ke dalam widget UI Anda secara aman
+            self.psup_kain_qty.setValue(kain_qty)
+            self.psup_kain_harga.setValue(kain_harga)
+            self.psup_tambah_bon.setValue(tambah_bon)
+            self.psup_potong_bon.setValue(potong_bon)
+                
+            # ========================================================
+            # MEMBACA DAFTAR BARANG YANG BERADA DI BAWAH HEADER TABEL
+            # ========================================================
+            self.cart_pengsup.clear()
+            for r in range(data_start_row + 1, ws.max_row + 1):
+                nama = ws.cell(r, 1).value
+                # Lewati jika baris kosong atau berisi teks ringkasan "TOTAL"
+                if not nama or str(nama).strip() == "" or "total" in str(nama).lower(): 
+                    continue
+                
+                qty_val = str(ws.cell(r, 2).value or "0").replace(',', '').strip()
+                harga_val = str(ws.cell(r, 3).value or "0").replace('Rp ', '').replace('.', '').replace(',', '').strip()
+                tipe = str(ws.cell(r, 4).value or "Setor Barang Jadi (Kain)").strip()
+                
+                qty = float(qty_val) if qty_val else 0.0
+                harga = float(harga_val) if harga_val else 0.0
+                
+                self.cart_pengsup.append({
+                    "tipe": tipe, 
+                    "sku_kode": str(nama), 
+                    "nama_garapan": str(nama), 
+                    "qty": qty, 
+                    "harga": harga, 
+                    "total": qty * harga
+                })
+                
+            # Segarkan tampilan grid tabel di aplikasi Anda
             self.refresh_pengsup_table()
-            QMessageBox.information(self, "Sukses", "Data Excel berhasil ditarik ke keranjang Pengsup!")
-            
+            QMessageBox.information(self, "Sukses", "Draf data Pengsup dan rincian Kain Mentah berhasil dimuat secara pintar tanpa halangan!")
+
         except Exception as e:
-            QMessageBox.critical(self, "Error Import", f"Gagal membaca Excel: {e}")
+            QMessageBox.critical(self, "Error Import", f"Gagal membaca atau membedah struktur file Excel:\n{e}")
 
     # ==========================================
     # LOGIC BARU: GAJI PASUKAN (KARYAWAN)
@@ -1014,161 +1094,210 @@ class GajiView(QWidget):
             self.table_pasukan.setItem(i, 8, item_bersih)
 
     def import_absensi_excel(self):
-        """Smart Import Excel Absensi + Autopilot Perhitungan Aplikasi Lama"""
+        """Import Excel Mesin Fingerprint + Scanning Spasial + Autopilot Kasbon & Tarif Dinamis"""
         file_path, _ = QFileDialog.getOpenFileName(self, "Pilih Excel Absensi Karyawan", "", "Excel Files (*.xlsx *.xls)")
         if not file_path: return
 
         try:
+            self.load_karyawan_data()
+            
             self.lbl_file_absen.setText(f"File aktif: {os.path.basename(file_path)}")
-            
-            # 1. Scanning letak Header asli (kebal terhadap kop surat fingerprint)
-            df_raw = pd.read_excel(file_path, header=None)
-            header_idx = 0
-            for i in range(min(15, len(df_raw))):
-                baris_teks = " ".join(str(x).lower().strip() for x in df_raw.iloc[i].values)
-                if 'nama' in baris_teks or 'name' in baris_teks or 'karyawan' in baris_teks:
-                    header_idx = i
-                    break
-            
-            df = pd.read_excel(file_path, header=header_idx)
-            df.columns = df.columns.astype(str).str.strip().str.lower()
+            excel_data = pd.read_excel(file_path, sheet_name=None, header=None)
+            rekap_dict = {}
 
-            col_nama = next((c for c in df.columns if 'nama' in c or 'name' in c or 'karyawan' in c), None)
-            col_hadir = next((c for c in df.columns if ('hadir' in c and 'tidak' not in c) or 'total kehadiran' in c), None)
-            col_nrml = next((c for c in df.columns if 'normal' in c), None)
-            col_lmbr = next((c for c in df.columns if 'lembur' in c and 'tidak' not in c), None)
+            # 1. LOGIKA SCANNIG SPASIAL (KEBAL HEADERS)
+            for sheet_name, df in excel_data.items():
+                uid_loc = [(r, c) for r in range(len(df)) for c in range(len(df.columns)) if "user id" in str(df.iloc[r, c]).strip().lower()]
+                if not uid_loc: continue
 
-            if not col_nama:
-                return QMessageBox.warning(self, "Format Gagal", "Kolom 'Nama' tidak ditemukan di Excel.")
+                for r_uid, c_uid in uid_loc:
+                    emp_id = ""
+                    name_str = "Unknown"
+                    
+                    for offset in range(1, 10):
+                        if c_uid + offset < len(df.columns) and str(df.iloc[r_uid, c_uid + offset]).strip() not in ['', 'nan', 'None']:
+                            emp_id = str(df.iloc[r_uid, c_uid + offset]).strip().replace(".0", "")
+                            break
 
-            # Blokir signal tabel agar UI tidak lag saat proses pengisian masal
+                    for r_nama in range(max(0, r_uid-2), r_uid+2):
+                        for c_nama in range(max(0, c_uid-5), c_uid+5):
+                            if c_nama < len(df.columns) and "nama" in str(df.iloc[r_nama, c_nama]).strip().lower():
+                                for offset in range(1, 10):
+                                    if c_nama + offset < len(df.columns) and str(df.iloc[r_nama, c_nama + offset]).strip() not in ['', 'nan', 'None']:
+                                        name_str = str(df.iloc[r_nama, c_nama + offset]).strip().lower()
+                                        break
+                                break
+
+                    date_col = -1
+                    for c_test in range(c_uid, -1, -1):
+                        for r_test in range(r_uid + 5, min(r_uid + 20, len(df))):
+                            val = str(df.iloc[r_test, c_test]).strip()
+                            if len(val) >= 4 and val[:2].isdigit() and " " in val:
+                                date_col = c_test
+                                break
+                        if date_col != -1: break
+
+                    if date_col == -1: continue
+
+                    total_normal = 0
+                    total_lembur = 0
+                    hari_hadir = 0
+
+                    for r_data in range(r_uid + 5, min(r_uid + 45, len(df))):
+                        date_val = str(df.iloc[r_data, date_col]).strip()
+                        if not (len(date_val) >= 4 and date_val[:2].isdigit()): continue
+
+                        waktu_taps = [self.parse_waktu(df.iloc[r_data, c]) for c in range(date_col + 1, min(date_col + 15, len(df.columns))) if self.parse_waktu(df.iloc[r_data, c]) is not None]
+
+                        if waktu_taps:
+                            min_t = round(min(waktu_taps) * 1440)
+                            max_t = round(max(waktu_taps) * 1440)
+                            
+                            if len(waktu_taps) > 1:
+                                diff = max_t - min_t
+                                if diff < 0: diff += 1440
+                                total_mnt = diff
+                                hari_hadir += 1
+                            else:
+                                total_mnt = 0 
+                            
+                            menit_normal = min(total_mnt, 510)
+                            lembur = max(0, total_mnt - 510)
+                            
+                            total_normal += menit_normal
+                            total_lembur += lembur
+                            
+                    if name_str not in rekap_dict: rekap_dict[name_str] = {'hadir': 0, 'normal': 0, 'lembur': 0}
+                    rekap_dict[name_str]['hadir'] += hari_hadir
+                    rekap_dict[name_str]['normal'] += total_normal
+                    rekap_dict[name_str]['lembur'] += total_lembur
+
+            # 2. SEBAR DATA KE GRID TABEL PYSIDE6
             self.table_pasukan.blockSignals(True)
 
-            for _, row_df in df.iterrows():
-                nama_excel = str(row_df[col_nama]).strip().lower()
+            for r in range(self.table_pasukan.rowCount()):
+                item_nama = self.table_pasukan.item(r, 1)
+                if not item_nama: continue
+                nama_tabel = item_nama.text().strip().lower()
+                
+                matched_name = None
+                for ex_name in rekap_dict.keys():
+                    if ex_name in nama_tabel or nama_tabel in ex_name:
+                        matched_name = ex_name; break
+                
+                if matched_name:
+                    data_karyawan = rekap_dict[matched_name]
+                    val_hadir = str(data_karyawan['hadir'])
+                    val_nrml = float(data_karyawan['normal'])
+                    val_lmbr = float(data_karyawan['lembur'])
 
-                for r in range(self.table_pasukan.rowCount()):
-                    nama_tabel = self.table_pasukan.item(r, 1).text().strip().lower()
+                    p_id = int(self.table_pasukan.item(r, 0).text())
+                    balance_db = self.db.query(BonBalance).filter(BonBalance.person_id == p_id).first()
+                    bon_lama = balance_db.saldo if balance_db else 0.0
 
-                    # Jika nama di Excel cocok dengan nama Karyawan di Database
-                    if nama_excel in nama_tabel or nama_tabel in nama_excel:
-                        val_hadir = str(row_df[col_hadir]) if col_hadir else "0"
-                        val_nrml = float(row_df[col_nrml]) if col_nrml and pd.notnull(row_df[col_nrml]) else 0.0
-                        val_lmbr = float(row_df[col_lmbr]) if col_lmbr and pd.notnull(row_df[col_lmbr]) else 0.0
+                    # Nilai Tarif Default dari Aplikasi Lama
+                    trf_normal = self.tarif_normal.value()
+                    trf_lembur = self.tarif_lembur.value()
 
-                        # Ambil Saldo Kasbon Riil dari Database saat ini
-                        p_id = int(self.table_pasukan.item(r, 0).text())
-                        balance_db = self.db.query(BonBalance).filter(BonBalance.person_id == p_id).first()
-                        bon_lama = balance_db.saldo if balance_db else 0.0
+                    gaji_kotor = (val_nrml * trf_normal) + (val_lmbr * trf_lembur)
+                    potong_bon = bon_lama if gaji_kotor >= bon_lama else gaji_kotor
+                    gaji_bersih = gaji_kotor - potong_bon
 
-                        # --- ALGORITMA UTAMA APLIKASI LAMA ---
-                        uang_normal = val_nrml * 135.0
-                        uang_lembur = val_lmbr * 200.0
-                        gaji_kotor = uang_normal + uang_lembur
-
-                        # Aturan Autopilot Kasbon
-                        if gaji_kotor >= bon_lama:
-                            potong_bon = bon_lama
+                    # Siapkan Item dan Berikan Hak Akses EDIT GANDA secara Pintar
+                    for col_idx in range(11):
+                        if not self.table_pasukan.item(r, col_idx): 
+                            self.table_pasukan.setItem(r, col_idx, QTableWidgetItem())
+                        
+                        item = self.table_pasukan.item(r, col_idx)
+                        # Hanya Izinkan Edit Ganda untuk kolom Menit, Tarif, dan Potongan Kasbon
+                        if col_idx in [3, 4, 5, 6, 9]:
+                            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsEditable)
                         else:
-                            potong_bon = gaji_kotor
+                            item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
 
-                        gaji_bersih = gaji_kotor - potong_bon
+                    # Masukkan teks data ke sel sesuai dengan indeks kolom yang baru
+                    self.table_pasukan.item(r, 2).setText(val_hadir)
+                    self.table_pasukan.item(r, 3).setText(f"{val_nrml:g}")
+                    self.table_pasukan.item(r, 4).setText(f"{trf_normal:g}") # Tarif Normal
+                    self.table_pasukan.item(r, 5).setText(f"{val_lmbr:g}")
+                    self.table_pasukan.item(r, 6).setText(f"{trf_lembur:g}") # Tarif Lembur
+                    self.table_pasukan.item(r, 7).setText(f"Rp {gaji_kotor:,.0f}")
+                    self.table_pasukan.item(r, 8).setText(f"Rp {bon_lama:,.0f}")
+                    self.table_pasukan.item(r, 9).setText(f"{potong_bon:g}")
+                    self.table_pasukan.item(r, 10).setText(f"Rp {gaji_bersih:,.0f}")
 
-                        # Update data ke dalam baris tabel Pyside6 secara Live
-                        self.table_pasukan.item(r, 2).setText(val_hadir)
-                        self.table_pasukan.item(r, 3).setText(f"{val_nrml:g}")
-                        self.table_pasukan.item(r, 4).setText(f"{val_lmbr:g}")
-                        self.table_pasukan.item(r, 5).setText(f"Rp {gaji_kotor:,.0f}")
-                        self.table_pasukan.item(r, 6).setText(f"Rp {bon_lama:,.0f}")
-                        self.table_pasukan.item(r, 7).setText(f"{potong_bon:g}") # Simpan angka murni di kolom potong agar bisa diedit kasir
-                        self.table_pasukan.item(r, 8).setText(f"Rp {gaji_bersih:,.0f}")
-
-                        # UX Tambahan: Beri warna redup jika karyawan membawa pulang uang Rp 0 (Habis potong bon)
-                        if gaji_bersih == 0 and gaji_kotor > 0:
-                            for col_idx in range(self.table_pasukan.columnCount()):
-                                self.table_pasukan.item(r, col_idx).setBackground(QColor("#2d1f1f")) # Background merah gelap Cyberpunk
-                                self.table_pasukan.item(r, col_idx).setForeground(QColor(Theme.TEXT_MUTED))
+                    if gaji_bersih == 0 and gaji_kotor > 0:
+                        for col_idx in range(11):
+                            self.table_pasukan.item(r, col_idx).setBackground(QColor("#2d1f1f"))
+                            self.table_pasukan.item(r, col_idx).setForeground(QColor(Theme.TEXT_MUTED))
 
             self.table_pasukan.blockSignals(False)
-            self.recalc_pasukan() # Lakukan re-kalkulasi grand total bawah
-            QMessageBox.information(self, "Sukses", "Data Absensi Berhasil Di-import dengan Kalkulasi Autopilot Kasbon!")
+            self.recalc_pasukan()
+            QMessageBox.information(self, "Berhasil", "Data Absensi berhasil dimuat! Ketuk ganda pada kolom Menit/Tarif/Potongan jika ingin melakukan revisi.")
 
         except Exception as e:
-            QMessageBox.critical(self, "Error Import", f"Gagal memproses file absensi:\n{e}")
+            self.table_pasukan.blockSignals(False)
+            QMessageBox.critical(self, "Error", f"Gagal memproses file absensi:\n{e}")
 
     def recalc_pasukan(self):
-        # Siapkan variabel total Anda (jangan ubah ini jika namanya berbeda di kode asli Anda)
-        total_kotor = 0
-        total_potong = 0
-        total_bersih = 0
-        
+        total_kotor, total_potong, total_bersih = 0.0, 0.0, 0.0
         for row in range(self.table_pasukan.rowCount()):
             try:
-                # 1. AMBIL ITEM SECARA AMAN (ANTI-NONETYPE)
-                it_lmbr = self.table_pasukan.item(row, 4)
-                it_kotor = self.table_pasukan.item(row, 5)
-                it_bon = self.table_pasukan.item(row, 6)
-                it_potong = self.table_pasukan.item(row, 7)
-                it_bersih = self.table_pasukan.item(row, 8)
+                it_kotor = self.table_pasukan.item(row, 7)
+                it_potong = self.table_pasukan.item(row, 9)
+                it_bersih = self.table_pasukan.item(row, 10)
 
-                # 2. EKSTRAK TEKS SECARA AMAN (Jika sel kosong/None, jadikan "0")
-                txt_lmbr = it_lmbr.text().replace(',', '').strip() if it_lmbr and it_lmbr.text() else "0"
                 txt_kotor = it_kotor.text().replace('Rp ', '').replace(',', '').strip() if it_kotor and it_kotor.text() else "0"
-                txt_bon = it_bon.text().replace('Rp ', '').replace(',', '').strip() if it_bon and it_bon.text() else "0"
                 txt_potong = it_potong.text().replace('Rp ', '').replace(',', '').strip() if it_potong and it_potong.text() else "0"
                 txt_bersih = it_bersih.text().replace('Rp ', '').replace(',', '').strip() if it_bersih and it_bersih.text() else "0"
 
-                # 3. KONVERSI KE FLOAT
-                mnt_lembur = float(txt_lmbr) if txt_lmbr else 0.0
-                gaji_kotor = float(txt_kotor) if txt_kotor else 0.0
-                bon_lama = float(txt_bon) if txt_bon else 0.0
-                potong_bon = float(txt_potong) if txt_potong else 0.0
-                gaji_bersih = float(txt_bersih) if txt_bersih else 0.0
-
-                # 4. TAMBAHKAN KE GRAND TOTAL
-                total_kotor += gaji_kotor
-                total_potong += potong_bon
-                total_bersih += gaji_bersih
-
+                total_kotor += float(txt_kotor)
+                total_potong += float(txt_potong)
+                total_bersih += float(txt_bersih)
             except ValueError:
-                continue # Abaikan baris jika kasir mengetik huruf sembarangan
+                continue
+
+        if hasattr(self, 'lbl_grand_kotor'): self.lbl_grand_kotor.setText(f"Rp {total_kotor:,.0f}")
+        if hasattr(self, 'lbl_grand_potong'): self.lbl_grand_potong.setText(f"Rp {total_potong:,.0f}")
+        if hasattr(self, 'lbl_grand_bersih'): self.lbl_grand_bersih.setText(f"Rp {total_bersih:,.0f}")
 
     def submit_pasukan(self):
-        """Menyimpan seluruh baris tabel karyawan yang memiliki Gaji ke dalam SQLite."""
-        self.recalc_pasukan() # Refresh pastikan angka valid sebelum simpan
         tanggal_str = self.pasukan_date.date().toString("yyyy-MM-dd")
-        jml_berhasil = 0
+        # SOLUSI: Kita hanya menyimpan ID angka murni, bukan objek ORM mentah
+        run_ids_to_print = [] 
 
+        jml_berhasil = 0
         try:
             for row in range(self.table_pasukan.rowCount()):
                 try:
-                    p_id = int(self.table_pasukan.item(row, 0).text())
-                    
-                    # 1. PENGAMANAN INPUT: Gunakan replace dan deteksi string kosong
-                    txt_normal = self.table_pasukan.item(row, 3).text().replace(',', '').strip()
-                    mnt_normal = float(txt_normal) if txt_normal else 0.0
-                    
-                    txt_lembur = self.table_pasukan.item(row, 4).text().replace(',', '').strip()
-                    mnt_lembur = float(txt_lembur) if txt_lembur else 0.0
+                    it_id = self.table_pasukan.item(row, 0)
+                    if not it_id or not it_id.text().strip(): continue
+                    p_id = int(it_id.text().strip())
 
-                    # Abaikan karyawan yang minggu ini libur terus (0 menit kerja)
+                    txt_hadir = self.table_pasukan.item(row, 2).text().strip() if self.table_pasukan.item(row, 2) else "0"
+                    txt_normal = self.table_pasukan.item(row, 3).text().strip() if self.table_pasukan.item(row, 3) else "0"
+                    txt_lembur = self.table_pasukan.item(row, 5).text().strip() if self.table_pasukan.item(row, 5) else "0"
+                    
+                    mnt_normal = float(txt_normal.replace(',', '')) if txt_normal else 0.0
+                    mnt_lembur = float(txt_lembur.replace(',', '')) if txt_lembur else 0.0
+
                     if mnt_normal == 0 and mnt_lembur == 0:
-                        continue
+                        continue # Lewati karyawan yang tidak bekerja minggu ini
 
-                    hari_hadir = self.table_pasukan.item(row, 2).text()
-                    
-                    # 2. PENGAMANAN KASBON
-                    txt_potong = self.table_pasukan.item(row, 7).text().replace(',', '').strip()
-                    potong_bon = float(txt_potong) if txt_potong else 0.0
-                    
-                    bon_lama = float(self.table_pasukan.item(row, 6).text().replace('Rp ', '').replace(',', ''))
-                    gaji_kotor = float(self.table_pasukan.item(row, 5).text().replace('Rp ', '').replace(',', ''))
-                    gaji_bersih = float(self.table_pasukan.item(row, 8).text().replace('Rp ', '').replace(',', ''))
+                    it_kotor = self.table_pasukan.item(row, 7)
+                    it_bon = self.table_pasukan.item(row, 8)
+                    it_potong = self.table_pasukan.item(row, 9)
+                    it_bersih = self.table_pasukan.item(row, 10)
+
+                    gaji_kotor = float(it_kotor.text().replace('Rp ', '').replace(',', '').strip()) if it_kotor and it_kotor.text() else 0.0
+                    bon_lama = float(it_bon.text().replace('Rp ', '').replace(',', '').strip()) if it_bon and it_bon.text() else 0.0
+                    potong_bon = float(it_potong.text().replace('Rp ', '').replace(',', '').strip()) if it_potong and it_potong.text() else 0.0
+                    gaji_bersih = float(it_bersih.text().replace('Rp ', '').replace(',', '').strip()) if it_bersih and it_bersih.text() else 0.0
 
                     sisa_bon_akhir = bon_lama - potong_bon
-                    keterangan = f"Hadir: {hari_hadir} hari | Menit Nrml: {mnt_normal} | Menit Lmb: {mnt_lembur}"
+                    keterangan = f"Hadir: {txt_hadir} | Normal: {mnt_normal:g} | Lembur: {mnt_lembur:g}"
 
-                    # 1. Simpan Riwayat Penggajian (SalaryRun)
+                    # Inisialisasi baris data ORM
                     run = SalaryRun(
                         tipe="PASUKAN_KARYAWAN", person_id=p_id, tanggal_proses=tanggal_str,
                         gaji_kotor=gaji_kotor, bon_lama=bon_lama, tambah_bon=0,
@@ -1176,8 +1305,12 @@ class GajiView(QWidget):
                         catatan=keterangan
                     )
                     self.db.add(run)
+                    
+                    # Kita paksa database memberikan ID sementara dengan flush() sebelum di-commit
+                    self.db.flush() 
+                    run_ids_to_print.append(run.id) # Masukkan ID berupa angka murni ke antrean cetak
 
-                    # 2. Update Sistem Kasbon Karyawan
+                    # Update Saldo Kasbon Karyawan
                     if potong_bon > 0:
                         balance = self.db.query(BonBalance).filter(BonBalance.person_id == p_id).first()
                         if balance:
@@ -1185,21 +1318,36 @@ class GajiView(QWidget):
                             self.db.add(BonMovement(person_id=p_id, tanggal=tanggal_str, tipe="POTONG_GAJI", nominal=potong_bon, sumber="PAYROLL_KARYAWAN"))
 
                     jml_berhasil += 1
+
                 except ValueError:
-                    # [KODE BARU] Jika ada baris yang error, abaikan hanya baris itu dan lanjut ke karyawan lain
                     continue
 
+            # 1. Commit Semua ke Database secara final
             self.db.commit()
-            
-            if jml_berhasil > 0:
-                QMessageBox.information(self, "Sukses!", f"Berhasil menyimpan {jml_berhasil} slip gaji karyawan dan memotong kasbon terkait secara otomatis.")
-                self.load_karyawan_data() # Kosongkan dan refresh tabel ke kondisi semula
+
+            # 2. TRIGGER PDF ENGINE MASSAL BERDASARKAN ANGKA ID
+            if run_ids_to_print:
+                from utils.pdf_engine import generate_salary_slip
+                
+                for s_id in run_ids_to_print:
+                    generate_salary_slip(s_id) # SANGAT AMAN: passing angka ID murni ke fungsi PDF Anda
+                
+                # Buka folder penampung ekspor PDF agar kasir bisa langsung print masal
+                export_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "exports", "slips")
+                if os.path.exists(export_dir):
+                    os.startfile(export_dir)
+
+                QMessageBox.information(self, "Sukses!", f"{len(run_ids_to_print)} Slip Gaji Karyawan berhasil disimpan dan PDF telah dibuat!")
+                
+                # 3. Reset table ke 0 agar terhindar dari double-click submit kasir
+                self.load_karyawan_data() 
+                self.recalc_pasukan()
             else:
-                QMessageBox.warning(self, "Kosong", "Tidak ada data jam kerja yang bisa diproses (Semua karyawan bernilai 0 menit).")
+                QMessageBox.warning(self, "Kosong", "Tidak ada data gaji karyawan yang valid untuk diproses.")
 
         except Exception as e:
             self.db.rollback()
-            QMessageBox.critical(self, "Error Fatal", f"Gagal menyimpan data massal ke database:\n{e}")
+            QMessageBox.critical(self, "Error", f"Gagal menyimpan data gaji: {e}")
 
     # ==========================================
     # FITUR BACKUP DRAFT / STACK KE EXCEL
@@ -1229,26 +1377,32 @@ class GajiView(QWidget):
             QMessageBox.critical(self, "Error Export", f"Gagal mengexport draft: {e}")
 
     def export_excel_pengsup(self):
-        """Mengekspor draft/stack garapan pengsup yang ada di keranjang saat ini ke Excel."""
-        if not self.cart_pengsup:
-            return QMessageBox.warning(self, "Keranjang Kosong", "Tabel garapan masih kosong! Tambahkan garapan terlebih dahulu sebelum di-export.")
-
+        if not self.cart_pengsup: return QMessageBox.warning(self, "Keranjang Kosong", "Tabel garapan masih kosong!")
         file_path, _ = QFileDialog.getSaveFileName(self, "Backup Draft Pengsup", "Draft_Totalan_Pengsup.xlsx", "Excel Files (*.xlsx)")
         if not file_path: return
         
         try:
-            data = []
+            from openpyxl import Workbook
+            wb = Workbook()
+            ws1 = wb.active
+            ws1.title = "Daftar_Pemasukan"
+            ws1.append(["NAMA", self.psup_person.currentText()])
+            ws1.append(["TANGGAL", self.psup_date.date().toString("yyyy-MM-dd")])
+            
+            # --- MENYIMPAN KAIN MENTAH KE EXCEL ---
+            ws1.append(["KAIN_QTY", self.psup_kain_qty.value()]) 
+            ws1.append(["KAIN_HARGA", self.psup_kain_harga.value()]) 
+            
+            ws1.append(["BON_TAMBAH", self.psup_tambah_bon.value()])
+            ws1.append(["BON_POTONG", self.psup_potong_bon.value()])
+            ws1.append([])
+            ws1.append(["SKU/Nama", "Qty", "Harga/Tarif", "Tipe/Kategori"])
+            
             for item in self.cart_pengsup:
-                data.append({
-                    "SKU/Nama": item['nama_garapan'],
-                    "Qty": item['qty'],
-                    "Harga/Tarif": item['harga'],
-                    "Tipe/Kategori": item['tipe'] 
-                })
+                ws1.append([item['nama_garapan'], item['qty'], item['harga'], item.get('tipe', 'Setor Barang Jadi (Kain)')])
                 
-            df = pd.DataFrame(data)
-            df.to_excel(file_path, index=False)
-            QMessageBox.information(self, "Sukses", "Draft garapan berhasil diamankan ke Excel!\nJika nanti ada revisi, Anda bisa langsung meng-import file ini.")
+            wb.save(file_path)
+            QMessageBox.information(self, "Sukses", "Draft garapan beserta data Kain Mentah berhasil diamankan ke Excel!")
         except Exception as e:
             QMessageBox.critical(self, "Error Export", f"Gagal mengexport draft: {e}")
 
@@ -1277,53 +1431,66 @@ class GajiView(QWidget):
             QMessageBox.critical(self, "Error Export", f"Gagal mengexport file template absensi karyawan: {e}")
     
     def on_pasukan_cell_edited(self, row, column):
-        """UX Fitur: Jika Kasir mengedit menit kerja atau potongan secara manual di grid, baris langsung menghitung otomatis"""
-        if column in [3, 4, 7]: # Hanya respon jika yang diedit kolom Menit Normal, Lembur, atau Potong Kasbon
+        """UX Reaktif: Menghitung ulang otomatis jika Menit, TARIF, atau Potongan di-edit kasir"""
+        if column in [3, 4, 5, 6, 9]:
             self.table_pasukan.blockSignals(True)
             try:
-                # 1. Ambil object item-nya secara aman
                 it_nrml = self.table_pasukan.item(row, 3)
-                it_lmbr = self.table_pasukan.item(row, 4)
-                it_bon_lama = self.table_pasukan.item(row, 6)
-                it_potong = self.table_pasukan.item(row, 7)
+                it_trf_nrml = self.table_pasukan.item(row, 4)
+                it_lmbr = self.table_pasukan.item(row, 5)
+                it_trf_lmbr = self.table_pasukan.item(row, 6)
+                it_bon_lama = self.table_pasukan.item(row, 8)
+                it_potong = self.table_pasukan.item(row, 9)
 
-                # 2. Ekstrak teks dan konversi ke float secara aman (Anti-NoneType)
+                # Parsing angka murni desimal dari sel tabel secara aman
                 val_nrml = float(it_nrml.text().strip()) if it_nrml and it_nrml.text().strip() else 0.0
+                trf_nrml = float(it_trf_nrml.text().replace('Rp ', '').replace(',', '').strip()) if it_trf_nrml and it_trf_nrml.text().strip() else self.tarif_normal.value()
+                
                 val_lmbr = float(it_lmbr.text().strip()) if it_lmbr and it_lmbr.text().strip() else 0.0
+                trf_lmbr = float(it_trf_lmbr.text().replace('Rp ', '').replace(',', '').strip()) if it_trf_lmbr and it_trf_lmbr.text().strip() else self.tarif_lembur.value()
                 
                 txt_bon = it_bon_lama.text().replace('Rp ', '').replace(',', '').strip() if it_bon_lama else "0"
                 bon_lama = float(txt_bon) if txt_bon else 0.0
 
-                # 3. Hitung Gaji Kotor
-                gaji_kotor = (val_nrml * 135.0) + (val_lmbr * 200.0)
+                # KALKULASI DINAMIS BERDASARKAN TARIF YANG SEDANG DI-EDIT
+                gaji_kotor = (val_nrml * trf_nrml) + (val_lmbr * trf_lmbr)
                 
-                # 4. Tentukan Potongan Kasbon
-                if column == 7: # Jika kasir mengetik manual nominal potongan
+                if column == 9: # Jika yang diedit kolom potongan, ikuti kemauan kasir
                     txt_potong = it_potong.text().replace(',', '').strip() if it_potong else "0"
                     potong_bon = float(txt_potong) if txt_potong else 0.0
-                else: # Jika kasir mengubah menit kerja, jalankan rumus autopilot
+                else: # Jika yang diedit menit/tarif, jalankan rumus autopilot kasbon
                     potong_bon = bon_lama if gaji_kotor >= bon_lama else gaji_kotor
                 
-                # Validasi pengaman agar tidak minus
                 if potong_bon > bon_lama: potong_bon = bon_lama
                 if potong_bon > gaji_kotor: potong_bon = gaji_kotor
 
                 gaji_bersih = gaji_kotor - potong_bon
 
-                # 5. Buat QTableWidgetItem jika sebelumnya None, lalu set teksnya
-                if not self.table_pasukan.item(row, 5): self.table_pasukan.setItem(row, 5, QTableWidgetItem())
-                if not self.table_pasukan.item(row, 7): self.table_pasukan.setItem(row, 7, QTableWidgetItem())
-                if not self.table_pasukan.item(row, 8): self.table_pasukan.setItem(row, 8, QTableWidgetItem())
+                # --- PERBAIKAN BUG NoneType ---
+                # Pastikan SELURUH widget item (11 kolom) di baris ini tidak ada yang None
+                for c in range(11):
+                    if not self.table_pasukan.item(row, c): 
+                        self.table_pasukan.setItem(row, c, QTableWidgetItem())
 
-                # Set kembali teks hasil kalkulasi terbarunya
-                self.table_pasukan.item(row, 5).setText(f"Rp {gaji_kotor:,.0f}")
-                self.table_pasukan.item(row, 7).setText(f"{potong_bon:g}")
-                self.table_pasukan.item(row, 8).setText(f"Rp {gaji_bersih:,.0f}")
+                # Tulis kembali hasil hitungan barunya ke layar secara rapi
+                self.table_pasukan.item(row, 7).setText(f"Rp {gaji_kotor:,.0f}")
+                self.table_pasukan.item(row, 9).setText(f"{potong_bon:g}")
+                self.table_pasukan.item(row, 10).setText(f"Rp {gaji_bersih:,.0f}")
                 
+                # Update Gaya Warna secara dinamis (Aman karena semua sel sudah diinisialisasi di atas)
+                if gaji_bersih == 0 and gaji_kotor > 0:
+                    for col_idx in range(11):
+                        self.table_pasukan.item(row, col_idx).setBackground(QColor("#2d1f1f"))
+                        self.table_pasukan.item(row, col_idx).setForeground(QColor(Theme.TEXT_MUTED))
+                else:
+                    for col_idx in range(11):
+                        self.table_pasukan.item(row, col_idx).setData(Qt.ItemDataRole.BackgroundRole, None)
+                        self.table_pasukan.item(row, col_idx).setData(Qt.ItemDataRole.ForegroundRole, None)
+
             except ValueError:
                 pass
             self.table_pasukan.blockSignals(False)
-            self.recalc_pasukan() # Hitung Grand Total bagian bawah dashboard
+            self.recalc_pasukan()
     
     def closeEvent(self, event):
         self.db.close()
