@@ -18,14 +18,24 @@ from data.database import SessionLocal
 from data.models import SkuMaster, HasilCutting, DistribusiCutting, PengeluaranOffline
 
 class StockView(QWidget):
-    def __init__(self):
+    def __init__(self, notifier=None):
         super().__init__()
         self.db = SessionLocal()
+        self.notifier = notifier
         self.staging_data = [] # Holds data for Excel Export
         self.setup_ui()
         self.load_stock_data()
         self.load_sku_dropdown()
+        if self.notifier:
+            self.notifier.database_changed.connect(self.refresh_harian_tables)
 
+    def refresh_harian_tables(self):
+        """Menyegarkan seluruh grid tabel catatan harian jika ada perubahan data di menu lain"""
+        self.db.expire_all()
+        # Masukkan semua fungsi load data harian Anda di bawah ini
+        if hasattr(self, 'load_stock_data'): self.load_stock_data()
+        if hasattr(self, 'load_sku_dropdown'): self.load_sku_dropdown()
+    
     def setup_ui(self):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -273,7 +283,7 @@ class StockView(QWidget):
         self.combo_sku.clear()
         skus = self.db.query(SkuMaster).filter(SkuMaster.is_active == 1).order_by(SkuMaster.kode_sku).all()
         for s in skus:
-            self.combo_sku.addItem(f"[{s.kode_sku}] {s.nama_produk}", s.kode_sku)
+            self.combo_sku.addItem(s.kode_sku, s.kode_sku)
 
     def add_to_staging(self):
         sku_code = self.combo_sku.currentData()

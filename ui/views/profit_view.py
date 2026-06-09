@@ -15,10 +15,10 @@ from data.models.sku import SkuMaster
 from data.models.master import TarifMaster
 
 class ProfitSimulationView(QWidget):
-    def __init__(self):
+    def __init__(self, notifier=None):
         super().__init__()
         self.db = SessionLocal()
-        
+        self.notifier = notifier
         # --- KONSTANTA BIAYA PRODUKSI ---
         self.COST_PACK = 100
         self.COST_HANGTAG = 97
@@ -29,7 +29,15 @@ class ProfitSimulationView(QWidget):
         
         self.setup_ui()
         self.load_kode_produksi()
+        if self.notifier:
+            self.notifier.database_changed.connect(self.refresh_harian_tables)
 
+    def refresh_harian_tables(self):
+        """Menyegarkan seluruh grid tabel catatan harian jika ada perubahan data di menu lain"""
+        self.db.expire_all()
+        # Masukkan semua fungsi load data harian Anda di bawah ini
+        if hasattr(self, 'load_kode_produksi'): self.load_kode_produksi()
+    
     def setup_ui(self):
         main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(20, 20, 20, 20)
@@ -404,4 +412,5 @@ class ProfitSimulationView(QWidget):
                 
         except Exception as e:
             self.db.rollback()
+            self.db.expire_all()
             QMessageBox.critical(self, "Error", f"Gagal mengubah status kain: {e}")

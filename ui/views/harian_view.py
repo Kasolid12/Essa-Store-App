@@ -15,9 +15,10 @@ from data.models import HasilCutting, DistribusiCutting, PengeluaranOffline, Mod
 from data.models.debt import DebtEntry
 
 class CatatanHarianView(QWidget):
-    def __init__(self):
+    def __init__(self, notifier=None):
         super().__init__()
         self.db = SessionLocal()
+        self.notifier = notifier
         self.selected_cut_id = None
         self.selected_dist_id = None
         self.selected_off_id = None
@@ -33,7 +34,23 @@ class CatatanHarianView(QWidget):
         self.load_offline()
         self.load_operasional()
         self.load_sumber_dropdowns()
+        
+        if self.notifier:
+            self.notifier.database_changed.connect(self.refresh_harian_tables)
 
+    def refresh_harian_tables(self):
+        """Menyegarkan seluruh grid tabel catatan harian jika ada perubahan data di menu lain"""
+        self.db.expire_all()
+        # Masukkan semua fungsi load data harian Anda di bawah ini
+        if hasattr(self, 'load_skus'): self.load_skus()
+        if hasattr(self, 'load_persons'): self.load_persons()
+        if hasattr(self, 'load_hasil_cutting'): self.load_hasil_cutting()
+        if hasattr(self, 'load_distribusi'): self.load_distribusi()
+        if hasattr(self, 'load_offline'): self.load_offline()
+        if hasattr(self, 'load_operasional'): self.load_operasional()
+        if hasattr(self, 'load_sumber_dropdowns'): self.load_sumber_dropdowns()
+        
+    
     def setup_ui(self):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -460,9 +477,10 @@ class CatatanHarianView(QWidget):
         selected = self.table_cutting.selectedItems()
         if not selected: return
         row = selected[0].row()
+        item_id = self.table_cutting.item(row, 0)
+        if not item_id or not item_id.text().strip(): return
         
-        # Ambil ID dari kolom pertama (hidden/visible index 0)
-        self.selected_cut_id = int(self.table_cutting.item(row, 0).text())
+        self.selected_cut_id = int(item_id.text().strip())
         
         # Ambil data dari DB untuk mengisi form
         record = self.db.query(HasilCutting).get(self.selected_cut_id)
@@ -497,9 +515,11 @@ class CatatanHarianView(QWidget):
         selected = self.table_distribusi.selectedItems()
         if not selected: return
         row = selected[0].row()
+        item_id = self.table_distribusi.item(row, 0)
+        if not item_id or not item_id.text().strip(): return
         
         # Ambil ID Distribusi
-        self.selected_dist_id = int(self.table_distribusi.item(row, 0).text())
+        self.selected_dist_id = int(item_id.text().strip())
         
         record = self.db.query(DistribusiCutting).get(self.selected_dist_id)
         if record:
@@ -564,7 +584,9 @@ class CatatanHarianView(QWidget):
         selected = self.table_offline.selectedItems()
         if not selected: return
         row = selected[0].row()
-        self.selected_off_id = int(self.table_offline.item(row, 0).text())
+        item_id = self.table_cutting.item(row, 0)
+        if not item_id or not item_id.text().strip(): return
+        self.selected_off_id = int(item_id.text().strip())
         
         record = self.db.query(PengeluaranOffline).get(self.selected_off_id)
         if record:
@@ -600,7 +622,10 @@ class CatatanHarianView(QWidget):
         selected = self.table_operasional.selectedItems()
         if not selected: return
         row = selected[0].row()
-        self.selected_op_id = int(self.table_operasional.item(row, 0).text())
+        item_id = self.table_operasional.item(row, 0)
+        if not item_id or not item_id.text().strip(): return
+        
+        self.selected_op_id = int(item_id.text().strip())
         
         record = self.db.query(ModalOperasional).get(self.selected_op_id)
         if record:
@@ -706,7 +731,9 @@ class CatatanHarianView(QWidget):
                 msg = "Data Cutting berhasil disimpan!"
                 
             self.db.commit()
-            
+            if hasattr(self, 'notifier') and self.notifier:
+                print("[*] Broadcasting database changes to all menus...")
+                self.notifier.database_changed.emit()
             self.load_hasil_cutting()
             self.load_sumber_dropdowns()
             self.reset_cutting_form() # Panggil reset form
@@ -714,6 +741,7 @@ class CatatanHarianView(QWidget):
             
         except Exception as e:
             self.db.rollback()
+            self.db.expire_all()
             QMessageBox.critical(self, "Error", f"Gagal menyimpan: {e}")
 
     def submit_distribusi(self):
@@ -758,7 +786,9 @@ class CatatanHarianView(QWidget):
                 msg = "Data Distribusi berhasil disimpan!"
 
             self.db.commit()
-            
+            if hasattr(self, 'notifier') and self.notifier:
+                print("[*] Broadcasting database changes to all menus...")
+                self.notifier.database_changed.emit()
             self.load_distribusi()
             self.on_dist_kode_changed() # Refresh dropdown sisa qty otomatis
             self.reset_distribusi_form() # Reset Form setelah sukses
@@ -767,6 +797,7 @@ class CatatanHarianView(QWidget):
             
         except Exception as e:
             self.db.rollback()
+            self.db.expire_all()
             QMessageBox.critical(self, "Error", f"Gagal menyimpan: {e}")
 
     def submit_offline(self):
@@ -798,12 +829,16 @@ class CatatanHarianView(QWidget):
                 msg = "Data Penjualan berhasil disimpan!"
                 
             self.db.commit()
+            if hasattr(self, 'notifier') and self.notifier:
+                print("[*] Broadcasting database changes to all menus...")
+                self.notifier.database_changed.emit()
             self.load_offline()
             self.reset_offline_form()
             QMessageBox.information(self, "Sukses", msg)
             
         except Exception as e:
             self.db.rollback()
+            self.db.expire_all()
             QMessageBox.critical(self, "Error", f"Gagal: {e}")
 
     def submit_operasional(self):
@@ -836,13 +871,16 @@ class CatatanHarianView(QWidget):
                 msg = "Data Pengeluaran Operasional berhasil disimpan!"
                 
             self.db.commit()
-            
+            if hasattr(self, 'notifier') and self.notifier:
+                print("[*] Broadcasting database changes to all menus...")
+                self.notifier.database_changed.emit()
             self.load_operasional()
             self.reset_operasional_form() # Panggil fungsi reset form setelah sukses
             QMessageBox.information(self, "Sukses", msg)
             
         except Exception as e:
             self.db.rollback()
+            self.db.expire_all()
             QMessageBox.critical(self, "Error", f"Gagal menyimpan: {e}")
             
     def closeEvent(self, event):

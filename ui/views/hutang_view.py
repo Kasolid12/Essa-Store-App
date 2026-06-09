@@ -16,10 +16,10 @@ from data.database import SessionLocal
 from data.models import DebtEntry, DebtPayment, Person, SkuMaster
 
 class HutangView(QWidget):
-    def __init__(self):
+    def __init__(self, notifier=None):
         super().__init__()
         self.db = SessionLocal()
-        
+        self.notifier = notifier
         self.selected_barang_debt_ids = [] 
         self.selected_modal_debt_ids = []
         self.selected_barang_edit_id = None 
@@ -29,7 +29,16 @@ class HutangView(QWidget):
         self.load_barang_terhutang()
         self.load_modal_hutang()
         self.generate_kode_produksi()
+        
+        if self.notifier:
+            self.notifier.database_changed.connect(self.refresh_hutang_view)
 
+    def refresh_hutang_view(self):
+        self.db.expire_all()
+        if hasattr(self, 'load_dropdowns'): self.load_dropdowns()
+        if hasattr(self, 'load_barang_terhutang'): self.load_barang_terhutang()
+        if hasattr(self, 'load_modal_hutang'): self.load_modal_hutang()
+    
     def setup_ui(self):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -560,11 +569,15 @@ class HutangView(QWidget):
                 msg = "Data Hutang Barang berhasil disimpan!"
 
             self.db.commit()
+            if hasattr(self, 'notifier') and self.notifier:
+                print("[*] Broadcasting database changes to all menus...")
+                self.notifier.database_changed.emit()
             self.load_barang_terhutang()
             self.reset_barang_form()
             QMessageBox.information(self, "Sukses", msg)
         except Exception as e:
             self.db.rollback()
+            self.db.expire_all()
             QMessageBox.critical(self, "Error", f"Gagal menyimpan: {e}")
             
     def submit_modal_hutang(self):
@@ -608,11 +621,15 @@ class HutangView(QWidget):
                 msg = "Data Hutang Modal berhasil disimpan!"
 
             self.db.commit()
+            if hasattr(self, 'notifier') and self.notifier:
+                print("[*] Broadcasting database changes to all menus...")
+                self.notifier.database_changed.emit()
             self.load_modal_hutang()
             self.reset_modal_form()
             QMessageBox.information(self, "Sukses", msg)
         except Exception as e:
             self.db.rollback()
+            self.db.expire_all()
             QMessageBox.critical(self, "Error", f"Gagal menyimpan: {e}")
     
     def calc_brg_total(self):
@@ -736,7 +753,9 @@ class HutangView(QWidget):
                     })
                     
             self.db.commit()
-            
+            if hasattr(self, 'notifier') and self.notifier:
+                print("[*] Broadcasting database changes to all menus...")
+                self.notifier.database_changed.emit()
             sisa_akhir = sisa_awal - nominal_uang
             if sisa_akhir < 0: sisa_akhir = 0
             
@@ -749,6 +768,7 @@ class HutangView(QWidget):
             
         except Exception as e:
             self.db.rollback()
+            self.db.expire_all()
             QMessageBox.critical(self, "Error", f"Gagal memproses batch payment: {e}")
 
     def submit_modal_pelunasan(self):
@@ -802,7 +822,9 @@ class HutangView(QWidget):
                     })
                     
             self.db.commit()
-            
+            if hasattr(self, 'notifier') and self.notifier:
+                print("[*] Broadcasting database changes to all menus...")
+                self.notifier.database_changed.emit()
             sisa_akhir = sisa_awal - nominal_uang
             if sisa_akhir < 0: sisa_akhir = 0
             
@@ -815,6 +837,7 @@ class HutangView(QWidget):
             
         except Exception as e:
             self.db.rollback()
+            self.db.expire_all()
             QMessageBox.critical(self, "Error", f"Gagal memproses batch deposit: {e}")
 
     def closeEvent(self, event):

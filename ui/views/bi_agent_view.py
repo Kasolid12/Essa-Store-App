@@ -43,10 +43,10 @@ class ChatBubble(QFrame):
             """)
 
 class BIAgentView(QWidget):
-    def __init__(self):
+    def __init__(self, notifier=None):
         super().__init__()
         self.db = SessionLocal()
-        
+        self.notifier = notifier
         # Variabel untuk menyimpan data Excel/CSV di memori Agen
         self.current_dataframe = None 
         
@@ -61,7 +61,13 @@ class BIAgentView(QWidget):
             "Apa yang ingin kamu analisis hari ini?"
         )
         self.add_message(welcome_msg, is_user=False)
+        if self.notifier:
+            self.notifier.database_changed.connect(self.refresh_harian_tables)
 
+    def refresh_harian_tables(self):
+        """Menyegarkan seluruh grid tabel catatan harian jika ada perubahan data di menu lain"""
+        self.db.expire_all()
+    
     def setup_ui(self):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)

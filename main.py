@@ -6,7 +6,7 @@ from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QHBoxLayout, QVBoxLayout,
     QLabel, QStackedWidget, QFrame
 )
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QObject, Signal
 
 # Import your custom UI components
 from ui.theme import Theme
@@ -23,6 +23,13 @@ from utils.backup_engine import backup_database
 from data.database import engine
 from data.models.base import Base
 import data.models
+
+class DataSignals(QObject):
+    # Sinyal universal yang dipicu setiap kali database berubah
+    database_changed = Signal()
+
+# Definisikan objek notifier global yang bisa diakses oleh seluruh view
+global_notifier = DataSignals()
 
 class ESSAMainWindow(QMainWindow):
     def __init__(self):
@@ -45,7 +52,7 @@ class ESSAMainWindow(QMainWindow):
         # Build the two halves of the screen
         self.build_sidebar()
         self.build_content_area()
-
+    
     def build_sidebar(self):
         # Sidebar Container
         self.sidebar = QFrame()
@@ -102,71 +109,44 @@ class ESSAMainWindow(QMainWindow):
         self.main_layout.addWidget(self.sidebar)
 
     def build_content_area(self):
-        # The Content Area holds multiple pages we can switch between seamlessly
         self.content_area = QFrame()
         content_layout = QVBoxLayout(self.content_area)
         content_layout.setContentsMargins(30, 30, 30, 30)
 
-        # QStackedWidget acts like a deck of cards; only one page is visible at a time
         self.stacked_widget = QStackedWidget()
-        self.pages = {}
-        
-        # 1. Dashboard Placeholder
+        self.pages = {} # Hanya simpan dictionary kosong di awal
+
+        # Render Dashboard saja di awal
         page_dash = QWidget()
         lay_dash = QVBoxLayout(page_dash)
         title_dash = QLabel("SYSTEM DASHBOARD")
         title_dash.setStyleSheet(f"font-size: 28pt; font-weight: bold; color: {Theme.TEXT_MAIN};")
         lay_dash.addWidget(title_dash)
         lay_dash.addStretch()
+        
         self.pages["dashboard"] = page_dash
         self.stacked_widget.addWidget(page_dash)
-
-        # 2. Catatan Harian (REAL VIEW)
-        page_harian = CatatanHarianView()
-        self.pages["harian"] = page_harian
-        self.stacked_widget.addWidget(page_harian)
-        
-        # 3. Data Manager (REAL VIEW)
-        page_master = MasterDataView()
-        self.pages["master"] = page_master
-        self.stacked_widget.addWidget(page_master)
-        
-        # 4. Hutang Manager (REAL VIEW)
-        page_hutang = HutangView()
-        self.pages["hutang"] = page_hutang
-        self.stacked_widget.addWidget(page_hutang)
-        
-        # 5. Gaji & Bon Manager (REAL VIEW)
-        page_gaji = GajiView()
-        self.pages["gaji"] = page_gaji
-        self.stacked_widget.addWidget(page_gaji)
-        
-        # 6. Stock Manager (REAL VIEW)
-        page_stok = StockView()
-        self.pages["stok"] = page_stok
-        self.stacked_widget.addWidget(page_stok)
-        
-        # 7. Invoice & Piutang (REAL VIEW)
-        page_invoice = InvoiceView()
-        self.pages["invoice"] = page_invoice
-        self.stacked_widget.addWidget(page_invoice)
-        
-        # 8. Profit Simulation
-        page_profit = ProfitSimulationView()
-        self.pages["profit"] = page_profit
-        self.stacked_widget.addWidget(page_profit)
-        
-        page_bi_agent = BIAgentView()
-        self.pages["agent"] = page_bi_agent
-        self.stacked_widget.addWidget(page_bi_agent)
 
         content_layout.addWidget(self.stacked_widget)
         self.main_layout.addWidget(self.content_area)
 
     def switch_page(self, page_key):
-        """Switches the active page in the main viewing area."""
-        if page_key in self.pages:
-            self.stacked_widget.setCurrentWidget(self.pages[page_key])
+        """Switches the active page. Lazy-loads the page if it hasn't been created yet."""
+        if page_key not in self.pages:
+            # Render modul HANYA jika tombolnya diklik
+            if page_key == "harian": self.pages[page_key] = CatatanHarianView(notifier=global_notifier)
+            elif page_key == "master": self.pages[page_key] = MasterDataView(notifier=global_notifier)
+            elif page_key == "hutang": self.pages[page_key] = HutangView(notifier=global_notifier)
+            elif page_key == "gaji": self.pages[page_key] = GajiView(notifier=global_notifier)
+            elif page_key == "stok": self.pages[page_key] = StockView(notifier=global_notifier)
+            elif page_key == "invoice": self.pages[page_key] = InvoiceView(notifier=global_notifier)
+            elif page_key == "profit": self.pages[page_key] = ProfitSimulationView(notifier=global_notifier)
+            elif page_key == "agent": self.pages[page_key] = BIAgentView(notifier=global_notifier)
+            
+            # Tambahkan ke tumpukan widget
+            self.stacked_widget.addWidget(self.pages[page_key])
+
+        self.stacked_widget.setCurrentWidget(self.pages[page_key])
     
     def closeEvent(self, event):
         """Fires automatically when the user clicks the X to close the window."""

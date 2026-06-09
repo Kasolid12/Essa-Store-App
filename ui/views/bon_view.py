@@ -254,6 +254,7 @@ class BonView(QWidget):
             
         except Exception as e:
             self.db.rollback()
+            self.db.expire_all()
             QMessageBox.critical(self, "Error", f"Terjadi kesalahan database: {e}")
 
     def closeEvent(self, event):

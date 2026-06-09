@@ -21,16 +21,28 @@ from data.models.bon import BonBalance, BonMovement
 from utils.pdf_engine import generate_salary_slip
 
 class GajiView(QWidget):
-    def __init__(self):
+    def __init__(self, notifier=None):
         super().__init__()
         self.db = SessionLocal()
-        
-        self.cart_penjahit = [] 
-        self.cart_pengsup = [] 
-        
+        self.notifier = notifier # Simpan referensi notifier global
+
+        self.cart_penjahit = []
+        self.cart_pengsup = []
+
         self.setup_ui()
         self.load_dropdowns()
-        self.load_karyawan_data() # NEW: Load data karyawan di awal
+        self.load_karyawan_data()
+
+        if self.notifier:
+            self.notifier.database_changed.connect(self.refresh_all_gaji_data)
+
+    def refresh_all_gaji_data(self):
+        """Fungsi pembungkus untuk memuat ulang semua data dari database terbaru"""
+        self.db.expire_all() # Bersihkan cache ORM SQLAlchemy agar riil membaca sqlite terbaru
+        self.load_dropdowns()
+        self.load_karyawan_data()
+        if hasattr(self, 'refresh_pengsup_table'): self.refresh_pengsup_table()
+        if hasattr(self, 'recalc_pasukan'): self.recalc_pasukan()
 
     def parse_waktu(self, v):
         """Helper untuk membaca waktu aneh dari Excel mesin fingerprint"""
@@ -601,7 +613,9 @@ class GajiView(QWidget):
             )
             self.db.add(movement)
             self.db.commit()
-            
+            if hasattr(self, 'notifier') and self.notifier:
+                print("[*] Broadcasting database changes to all menus...")
+                self.notifier.database_changed.emit()
             QMessageBox.information(self, "Sukses", "Data kasbon berhasil diupdate manual!")
             
             self.spin_bon_nominal.setValue(0)
@@ -611,6 +625,7 @@ class GajiView(QWidget):
                 
         except Exception as e:
             self.db.rollback()
+            self.db.expire_all()
             QMessageBox.critical(self, "Error", f"Terjadi kesalahan database: {e}")
             
     def load_bon(self):
@@ -723,7 +738,10 @@ class GajiView(QWidget):
                 balance.saldo -= potong_bon
 
             self.db.commit()
-            
+            if hasattr(self, 'notifier') and self.notifier:
+                print("[*] Broadcasting database changes to all menus...")
+                self.notifier.database_changed.emit()
+                
             try:
                 pdf_path = generate_salary_slip(run.id) # Cukup passing run.id
                 if pdf_path and os.path.exists(pdf_path):
@@ -738,7 +756,9 @@ class GajiView(QWidget):
             self.on_penjahit_selected()
 
         except Exception as e:
-            self.db.rollback(); QMessageBox.critical(self, "Error", f"Gagal Database: {e}")
+            self.db.rollback() 
+            self.db.expire_all() 
+            QMessageBox.critical(self, "Error", f"Gagal Database: {e}")
 
     def import_excel_penjahit(self):
         """Fitur baru untuk import baris garapan Penjahit secara massal"""
@@ -941,7 +961,10 @@ class GajiView(QWidget):
                 balance.saldo -= potong_bon
 
             self.db.commit()
-
+            if hasattr(self, 'notifier') and self.notifier:
+                print("[*] Broadcasting database changes to all menus...")
+                self.notifier.database_changed.emit()
+                
             # Trigger PDF
             from utils.pdf_engine import generate_salary_slip
             pdf_path = generate_salary_slip(run.id)
@@ -954,6 +977,7 @@ class GajiView(QWidget):
 
         except Exception as e:
             self.db.rollback()
+            self.db.expire_all()
             QMessageBox.critical(self, "Error", f"Gagal Database: {e}")
 
     def import_excel_pengsup(self):
@@ -1324,7 +1348,10 @@ class GajiView(QWidget):
 
             # 1. Commit Semua ke Database secara final
             self.db.commit()
-
+            if hasattr(self, 'notifier') and self.notifier:
+                print("[*] Broadcasting database changes to all menus...")
+                self.notifier.database_changed.emit()
+                
             # 2. TRIGGER PDF ENGINE MASSAL BERDASARKAN ANGKA ID
             if run_ids_to_print:
                 from utils.pdf_engine import generate_salary_slip
@@ -1347,6 +1374,7 @@ class GajiView(QWidget):
 
         except Exception as e:
             self.db.rollback()
+            self.db.expire_all()
             QMessageBox.critical(self, "Error", f"Gagal menyimpan data gaji: {e}")
 
     # ==========================================

@@ -16,15 +16,24 @@ from data.database import SessionLocal
 from data.models import PengeluaranOffline
 
 class InvoiceView(QWidget):
-    def __init__(self):
+    def __init__(self, notifier=None):
         super().__init__()
         self.db = SessionLocal()
+        self.notifier = notifier
         self.selected_sales = []
         self.total_tagihan = 0.0
         
         self.setup_ui()
         self.load_sales_data()
+        if self.notifier:
+            self.notifier.database_changed.connect(self.refresh_harian_tables)
 
+    def refresh_harian_tables(self):
+        """Menyegarkan seluruh grid tabel catatan harian jika ada perubahan data di menu lain"""
+        self.db.expire_all()
+        # Masukkan semua fungsi load data harian Anda di bawah ini
+        if hasattr(self, 'load_sales_data'): self.load_sales_data()
+    
     def setup_ui(self):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)

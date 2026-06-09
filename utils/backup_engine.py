@@ -1,36 +1,29 @@
 # app_essa/utils/backup_engine.py
 import os
-import shutil
+import sqlite3
 from datetime import datetime
 
 def backup_database():
-    """Creates a timestamped backup of the SQLite database and cleans up old ones."""
-    # 1. Locate the active database
     base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     db_path = os.path.join(base_dir, "essa.db")
     
-    if not os.path.exists(db_path):
-        print("Backup Error: Database file not found.")
-        return False
+    if not os.path.exists(db_path): return False
 
-    # 2. Setup the Backup Directory
     backup_dir = os.path.join(base_dir, "backups")
     os.makedirs(backup_dir, exist_ok=True)
 
-    # 3. Generate Timestamped Filename
     timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    backup_filename = f"essa_backup_{timestamp}.db"
-    backup_filepath = os.path.join(backup_dir, backup_filename)
+    backup_filepath = os.path.join(backup_dir, f"essa_backup_{timestamp}.db")
 
     try:
-        # 4. Copy the Database
-        shutil.copy2(db_path, backup_filepath)
-        print(f"System Backup Successful: {backup_filename}")
-        
-        # 5. Run Smart Cleanup (Keep only last 30 backups)
+        # [SOLUSI] Gunakan API Backup bawaan SQLite yang 100% aman dari korupsi data
+        with sqlite3.connect(db_path) as source:
+            with sqlite3.connect(backup_filepath) as target:
+                source.backup(target)
+                
+        print(f"System Backup Successful: essa_backup_{timestamp}.db")
         _cleanup_old_backups(backup_dir, keep_limit=30)
         return True
-        
     except Exception as e:
         print(f"CRITICAL BACKUP FAILED: {e}")
         return False

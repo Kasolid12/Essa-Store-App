@@ -12,15 +12,25 @@ from data.database import SessionLocal
 from data.models import SkuMaster, Person
 
 class MasterDataView(QWidget):
-    def __init__(self):
+    def __init__(self, notifier=None):
         super().__init__()
         self.db = SessionLocal()
+        self.notifier = notifier
         self.selected_sku_id = None
         self.selected_person_id = None
         self.setup_ui()
         self.load_sku_data()
         self.load_person_data()
+        if self.notifier:
+            self.notifier.database_changed.connect(self.refresh_harian_tables)
 
+    def refresh_harian_tables(self):
+        """Menyegarkan seluruh grid tabel catatan harian jika ada perubahan data di menu lain"""
+        self.db.expire_all()
+        # Masukkan semua fungsi load data harian Anda di bawah ini
+        if hasattr(self, 'load_sku_data'): self.load_sku_data()
+        if hasattr(self, 'load_person_data'): self.load_person_data()
+    
     def setup_ui(self):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -194,6 +204,7 @@ class MasterDataView(QWidget):
             self.load_sku_data()
         except Exception as e:
             self.db.rollback()
+            self.db.expire_all()
 
     def delete_sku(self):
         if not self.selected_sku_id: return
@@ -205,6 +216,7 @@ class MasterDataView(QWidget):
             self.load_sku_data()
         except Exception:
             self.db.rollback()
+            self.db.expire_all()
             QMessageBox.critical(self, "Penghapusan Ditolak", "SKU ini sedang digunakan di tabel lain (Catatan Harian/Invoice) dan tidak bisa dihapus.")
 
     def clear_sku_form(self):
@@ -259,6 +271,7 @@ class MasterDataView(QWidget):
             self.load_person_data()
         except Exception as e:
             self.db.rollback()
+            self.db.expire_all()
             QMessageBox.critical(self, "Error", f"Gagal menyimpan data: {e}")
 
     def delete_person(self):
@@ -281,6 +294,7 @@ class MasterDataView(QWidget):
                 QMessageBox.information(self, "Sukses", "Data berhasil dihapus.")
             except Exception:
                 self.db.rollback()
+                self.db.expire_all()
                 QMessageBox.critical(self, "Penghapusan Ditolak", "Gagal Menghapus!\n\nOrang ini sudah memiliki riwayat transaksi (Bon, Hutang, atau Gaji). Menghapus data ini akan merusak pembukuan Anda.")
 
     def clear_person_form(self):
