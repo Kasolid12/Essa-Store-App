@@ -293,6 +293,12 @@ class HutangView(QWidget):
         lay.addLayout(bottom_lay)
 
     def load_dropdowns(self):
+        # 1. REKAM STATE / PILIHAN SAAT INI SEBELUM DI-CLEAR
+        current_brg_person_id = self.brg_person.currentData()
+        current_mod_person_id = self.mod_person.currentData()
+        current_brg_sku_id = self.brg_sku.currentData()
+
+        # 2. CLEAR DAN RELOAD DATA DARI DATABASE
         self.brg_person.clear()
         self.mod_person.clear()
         persons = self.db.query(Person).filter(Person.person_type.in_(['SUPPLIER', 'LAINNYA'])).order_by(Person.nama).all()
@@ -308,6 +314,19 @@ class HutangView(QWidget):
         for s in skus:
             kode_teks = str(s.kode_sku) if s.kode_sku else "NO-KODE"
             self.brg_sku.addItem(kode_teks, s.id)
+
+        # 3. KEMBALIKAN PILIHAN KE NAMA YANG DIREKAM (JIKA ADA)
+        if current_brg_person_id is not None:
+            idx = self.brg_person.findData(current_brg_person_id)
+            if idx >= 0: self.brg_person.setCurrentIndex(idx)
+
+        if current_mod_person_id is not None:
+            idx = self.mod_person.findData(current_mod_person_id)
+            if idx >= 0: self.mod_person.setCurrentIndex(idx)
+            
+        if current_brg_sku_id is not None:
+            idx = self.brg_sku.findData(current_brg_sku_id)
+            if idx >= 0: self.brg_sku.setCurrentIndex(idx)
 
     def calculate_paid(self, debt_entry):
         return sum(p.nominal_bayar for p in debt_entry.payments)

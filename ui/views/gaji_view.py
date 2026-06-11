@@ -9,7 +9,7 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Qt, QDate
 from PySide6.QtGui import QColor
-from PySide6.QtWidgets import QAbstractItemView
+from PySide6.QtWidgets import QAbstractItemView, QApplication
 from ui.components.tables import CyberTable
 from ui.components.buttons import CyberButton
 from ui.theme import Theme
@@ -19,6 +19,38 @@ from data.models.salary import SalaryRun, SalaryLineItem, MasterTarifPenjahit, P
 from data.models.master import TarifMaster
 from data.models.bon import BonBalance, BonMovement
 from utils.pdf_engine import generate_salary_slip
+from PySide6.QtCore import QThread, Signal
+import os
+
+class PDFWorker(QThread):
+    # Sinyal untuk berkomunikasi dengan Main Thread (GajiView)
+    finished = Signal(int, str)  # Mengirim (jumlah_sukses, path_folder_export)
+    error = Signal(str)          # Mengirim pesan error
+    progress = Signal(int, int)  # (Opsional) Mengirim (slip_ke, total_slip)
+
+    def __init__(self, run_ids):
+        super().__init__()
+        self.run_ids = run_ids
+
+    def run(self):
+        """Metode ini berjalan di thread terpisah (Tidak akan bikin UI Not Responding)"""
+        try:
+            from utils.pdf_engine import generate_salary_slip
+            
+            export_dir = ""
+            total_ids = len(self.run_ids)
+
+            for i, s_id in enumerate(self.run_ids):
+                pdf_path = generate_salary_slip(s_id)
+                
+                if not export_dir and pdf_path:
+                    export_dir = os.path.dirname(pdf_path)
+                self.progress.emit(i + 1, total_ids)
+
+            self.finished.emit(total_ids, export_dir)
+            
+        except Exception as e:
+            self.error.emit(str(e))
 
 class GajiView(QWidget):
     def __init__(self, notifier=None):
@@ -1042,6 +1074,8 @@ class GajiView(QWidget):
             # ========================================================
             self.cart_pengsup.clear()
             for r in range(data_start_row + 1, ws.max_row + 1):
+                if r % 10 == 0:
+                    QApplication.processEvents()
                 nama = ws.cell(r, 1).value
                 # Lewati jika baris kosong atau berisi teks ringkasan "TOTAL"
                 if not nama or str(nama).strip() == "" or "total" in str(nama).lower(): 
@@ -1197,9 +1231,15 @@ class GajiView(QWidget):
                     rekap_dict[name_str]['lembur'] += total_lembur
 
             # 2. SEBAR DATA KE GRID TABEL PYSIDE6
-            self.table_pasukan.blockSignals(True)
 
+            all_balances = self.db.query(BonBalance).all()
+            # Ubah menjadi struktur kamus {person_id: saldo} agar pencarian instan
+            dict_balances = {b.person_id: b.saldo for b in all_balances}
+            self.table_pasukan.blockSignals(True)
+            
             for r in range(self.table_pasukan.rowCount()):
+                if r % 5 == 0:
+                    QApplication.processEvents()
                 item_nama = self.table_pasukan.item(r, 1)
                 if not item_nama: continue
                 nama_tabel = item_nama.text().strip().lower()
@@ -1216,8 +1256,8 @@ class GajiView(QWidget):
                     val_lmbr = float(data_karyawan['lembur'])
 
                     p_id = int(self.table_pasukan.item(r, 0).text())
-                    balance_db = self.db.query(BonBalance).filter(BonBalance.person_id == p_id).first()
-                    bon_lama = balance_db.saldo if balance_db else 0.0
+                    # balance_db = self.db.query(BonBalance).filter(BonBalance.person_id == p_id).first()
+                    bon_lama = dict_balances.get(p_id, 0.0)
 
                     # Nilai Tarif Default dari Aplikasi Lama
                     trf_normal = self.tarif_normal.value()
@@ -1287,11 +1327,16 @@ class GajiView(QWidget):
 
     def submit_pasukan(self):
         tanggal_str = self.pasukan_date.date().toString("yyyy-MM-dd")
-        # SOLUSI: Kita hanya menyimpan ID angka murni, bukan objek ORM mentah
-        run_ids_to_print = [] 
-
+        run_ids_to_print = []
         jml_berhasil = 0
         try:
+            person_ids_di_layar = []
+            for row in range(self.table_pasukan.rowCount()):
+                it_id = self.table_pasukan.item(row, 0)
+                if it_id and it_id.text().strip():
+                    person_ids_di_layar.append(int(it_id.text().strip()))
+            balances_db = self.db.query(BonBalance).filter(BonBalance.person_id.in_(person_ids_di_layar)).all()
+            dict_obj_balances = {b.person_id: b for b in balances_db}
             for row in range(self.table_pasukan.rowCount()):
                 try:
                     it_id = self.table_pasukan.item(row, 0)
@@ -1306,7 +1351,7 @@ class GajiView(QWidget):
                     mnt_lembur = float(txt_lembur.replace(',', '')) if txt_lembur else 0.0
 
                     if mnt_normal == 0 and mnt_lembur == 0:
-                        continue # Lewati karyawan yang tidak bekerja minggu ini
+                        continue
 
                     it_kotor = self.table_pasukan.item(row, 7)
                     it_bon = self.table_pasukan.item(row, 8)
@@ -1329,14 +1374,12 @@ class GajiView(QWidget):
                         catatan=keterangan
                     )
                     self.db.add(run)
-                    
-                    # Kita paksa database memberikan ID sementara dengan flush() sebelum di-commit
                     self.db.flush() 
-                    run_ids_to_print.append(run.id) # Masukkan ID berupa angka murni ke antrean cetak
+                    run_ids_to_print.append(run.id)
 
                     # Update Saldo Kasbon Karyawan
                     if potong_bon > 0:
-                        balance = self.db.query(BonBalance).filter(BonBalance.person_id == p_id).first()
+                        balance = dict_obj_balances.get(p_id) # Ambil object dari RAM
                         if balance:
                             balance.saldo -= potong_bon
                             self.db.add(BonMovement(person_id=p_id, tanggal=tanggal_str, tipe="POTONG_GAJI", nominal=potong_bon, sumber="PAYROLL_KARYAWAN"))
@@ -1352,23 +1395,21 @@ class GajiView(QWidget):
                 print("[*] Broadcasting database changes to all menus...")
                 self.notifier.database_changed.emit()
                 
-            # 2. TRIGGER PDF ENGINE MASSAL BERDASARKAN ANGKA ID
             if run_ids_to_print:
-                from utils.pdf_engine import generate_salary_slip
-                
-                for s_id in run_ids_to_print:
-                    generate_salary_slip(s_id) # SANGAT AMAN: passing angka ID murni ke fungsi PDF Anda
-                
-                # Buka folder penampung ekspor PDF agar kasir bisa langsung print masal
-                export_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "exports", "slips")
-                if os.path.exists(export_dir):
-                    os.startfile(export_dir)
+                if hasattr(self, 'btn_submit_pasukan'):
+                    self.btn_submit_pasukan.setEnabled(False)
+                    self.btn_submit_pasukan.setText("Memproses PDF...")
 
-                QMessageBox.information(self, "Sukses!", f"{len(run_ids_to_print)} Slip Gaji Karyawan berhasil disimpan dan PDF telah dibuat!")
+                self.pdf_thread = PDFWorker(run_ids_to_print)
                 
-                # 3. Reset table ke 0 agar terhindar dari double-click submit kasir
-                self.load_karyawan_data() 
-                self.recalc_pasukan()
+                self.pdf_thread.finished.connect(self._on_pdf_batch_success)
+                self.pdf_thread.error.connect(self._on_pdf_batch_error)
+                
+                self.pdf_thread.start() 
+                
+                # NOTE: Kode di sini akan langsung selesai (tidak menunggu PDF selesai dicetak),
+                # UI langsung merespons dan kasir bisa melihat animasi berjalan lancar!
+                
             else:
                 QMessageBox.warning(self, "Kosong", "Tidak ada data gaji karyawan yang valid untuk diproses.")
 
@@ -1377,6 +1418,39 @@ class GajiView(QWidget):
             self.db.expire_all()
             QMessageBox.critical(self, "Error", f"Gagal menyimpan data gaji: {e}")
 
+    def _on_pdf_batch_success(self, jumlah_slip, export_dir):
+        """Dipanggil otomatis saat PDFWorker selesai 100%"""
+        
+        # 1. Kembalikan tombol seperti semula
+        if hasattr(self, 'btn_submit_pasukan'):
+            self.btn_submit_pasukan.setEnabled(True)
+            self.btn_submit_pasukan.setText("Simpan && Cetak All")
+
+        # 2. Buka folder Windows Explorer jika ada
+        if export_dir and os.path.exists(export_dir):
+            os.startfile(export_dir)
+
+        # 3. Tampilkan pesan sukses
+        QMessageBox.information(self, "Sukses!", f"{jumlah_slip} Slip Gaji Karyawan berhasil disimpan dan PDF telah dibuat di latar belakang!")
+        
+        # 4. Reset tabel (Sekarang aman dilakukan di akhir)
+        self.load_karyawan_data() 
+        self.recalc_pasukan()
+
+    def _on_pdf_batch_error(self, err_msg):
+        """Dipanggil jika terjadi error saat mencetak PDF di background"""
+        
+        # Kembalikan tombol
+        if hasattr(self, 'btn_submit_pasukan'):
+            self.btn_submit_pasukan.setEnabled(True)
+            self.btn_submit_pasukan.setText("Simpan && Cetak All")
+            
+        QMessageBox.warning(self, "PDF Error", f"Data berhasil disimpan ke database, TETAPI gagal mencetak PDF:\n{err_msg}")
+        
+        # Tetap reset tabel karena data sudah masuk database
+        self.load_karyawan_data() 
+        self.recalc_pasukan()
+    
     # ==========================================
     # FITUR BACKUP DRAFT / STACK KE EXCEL
     # ==========================================
