@@ -385,7 +385,7 @@ class GajiView(QWidget):
         self.pasukan_date.setCalendarPopup(True)
 
         self.tarif_normal = QDoubleSpinBox()
-        self.tarif_normal.setRange(0, 99999); self.tarif_normal.setValue(140)
+        self.tarif_normal.setRange(0, 99999); self.tarif_normal.setValue(150)
         self.tarif_normal.setPrefix("Rp "); self.tarif_normal.setSuffix(" /Mnt")
         self.tarif_normal.valueChanged.connect(self.recalc_pasukan)
 
@@ -1158,13 +1158,20 @@ class GajiView(QWidget):
 
         try:
             self.load_karyawan_data()
+            self.cache_absensi_harian = {} # 1. Reset Cache Harian untuk PDF
             
             self.lbl_file_absen.setText(f"File aktif: {os.path.basename(file_path)}")
             excel_data = pd.read_excel(file_path, sheet_name=None, header=None)
             rekap_dict = {}
 
-            # 1. LOGIKA SCANNIG SPASIAL (KEBAL HEADERS)
+            # =========================================================
+            # LOGIKA SCANNING SPASIAL (MURNI MENGGUNAKAN KODE ANDA)
+            # =========================================================
             for sheet_name, df in excel_data.items():
+                if "Analisa Kehadiran" in str(sheet_name) or "Pengaturan Shift" in str(sheet_name):
+                    continue
+
+                # Cek lokasi tulisan "user id" sebagai jangkar (anchor) pembacaan
                 uid_loc = [(r, c) for r in range(len(df)) for c in range(len(df.columns)) if "user id" in str(df.iloc[r, c]).strip().lower()]
                 if not uid_loc: continue
 
@@ -1172,11 +1179,13 @@ class GajiView(QWidget):
                     emp_id = ""
                     name_str = "Unknown"
                     
+                    # Cari ID Karyawan
                     for offset in range(1, 10):
                         if c_uid + offset < len(df.columns) and str(df.iloc[r_uid, c_uid + offset]).strip() not in ['', 'nan', 'None']:
                             emp_id = str(df.iloc[r_uid, c_uid + offset]).strip().replace(".0", "")
                             break
 
+                    # Cari Nama Karyawan
                     for r_nama in range(max(0, r_uid-2), r_uid+2):
                         for c_nama in range(max(0, c_uid-5), c_uid+5):
                             if c_nama < len(df.columns) and "nama" in str(df.iloc[r_nama, c_nama]).strip().lower():
@@ -1186,6 +1195,11 @@ class GajiView(QWidget):
                                         break
                                 break
 
+                    # Inisialisasi Cache Rincian PDF untuk Karyawan ini
+                    if name_str not in self.cache_absensi_harian:
+                        self.cache_absensi_harian[name_str] = []
+
+                    # Cari kolom Tanggal ("30 Sab", dsb)
                     date_col = -1
                     for c_test in range(c_uid, -1, -1):
                         for r_test in range(r_uid + 5, min(r_uid + 20, len(df))):
@@ -1205,41 +1219,62 @@ class GajiView(QWidget):
                         date_val = str(df.iloc[r_data, date_col]).strip()
                         if not (len(date_val) >= 4 and date_val[:2].isdigit()): continue
 
+                        # Tarik dan Parse semua jam tap di hari tersebut
                         waktu_taps = [self.parse_waktu(df.iloc[r_data, c]) for c in range(date_col + 1, min(date_col + 15, len(df.columns))) if self.parse_waktu(df.iloc[r_data, c]) is not None]
 
                         if waktu_taps:
+                            # Logika Hitungan Anda (Mencari tap masuk dan tap keluar)
                             min_t = round(min(waktu_taps) * 1440)
                             max_t = round(max(waktu_taps) * 1440)
                             
+                            # Ubah angka desimal menjadi string "HH:MM"
+                            jam_masuk_str = f"{int(min_t // 60):02d}:{int(min_t % 60):02d}"
+                            
                             if len(waktu_taps) > 1:
+                                jam_keluar_str = f"{int(max_t // 60):02d}:{int(max_t % 60):02d}"
                                 diff = max_t - min_t
                                 if diff < 0: diff += 1440
                                 total_mnt = diff
                                 hari_hadir += 1
                             else:
+                                jam_keluar_str = "Lupa"
                                 total_mnt = 0 
+                                hari_hadir += 1
                             
-                            menit_normal = min(total_mnt, 510)
-                            lembur = max(0, total_mnt - 510)
+                            menit_normal = min(total_mnt, 480)
+                            lembur = max(0, total_mnt - 480)
                             
                             total_normal += menit_normal
                             total_lembur += lembur
+                            
+                            # ========================================================
+                            # 2. SIMPAN CACHE PDF (DI DALAM LOOP HARIAN)
+                            # ========================================================
+                            self.cache_absensi_harian[name_str].append({
+                                "tanggal": date_val[:6],  # Contoh Output: "30 Sab"
+                                "masuk": jam_masuk_str,   # Contoh Output: "08:15"
+                                "keluar": jam_keluar_str, # Contoh Output: "16:45" atau "Lupa"
+                                "menit_normal": menit_normal,
+                                "menit_lembur": lembur
+                            })
                             
                     if name_str not in rekap_dict: rekap_dict[name_str] = {'hadir': 0, 'normal': 0, 'lembur': 0}
                     rekap_dict[name_str]['hadir'] += hari_hadir
                     rekap_dict[name_str]['normal'] += total_normal
                     rekap_dict[name_str]['lembur'] += total_lembur
 
-            # 2. SEBAR DATA KE GRID TABEL PYSIDE6
-
+            # ========================================================
+            # 3. SEBAR DATA REKAP MINGGUAN KE GRID TABEL PYSIDE6
+            # ========================================================
             all_balances = self.db.query(BonBalance).all()
-            # Ubah menjadi struktur kamus {person_id: saldo} agar pencarian instan
             dict_balances = {b.person_id: b.saldo for b in all_balances}
             self.table_pasukan.blockSignals(True)
             
+            from PySide6.QtWidgets import QApplication
+            
             for r in range(self.table_pasukan.rowCount()):
-                if r % 5 == 0:
-                    QApplication.processEvents()
+                if r % 5 == 0: QApplication.processEvents()
+                
                 item_nama = self.table_pasukan.item(r, 1)
                 if not item_nama: continue
                 nama_tabel = item_nama.text().strip().lower()
@@ -1256,10 +1291,8 @@ class GajiView(QWidget):
                     val_lmbr = float(data_karyawan['lembur'])
 
                     p_id = int(self.table_pasukan.item(r, 0).text())
-                    # balance_db = self.db.query(BonBalance).filter(BonBalance.person_id == p_id).first()
                     bon_lama = dict_balances.get(p_id, 0.0)
 
-                    # Nilai Tarif Default dari Aplikasi Lama
                     trf_normal = self.tarif_normal.value()
                     trf_lembur = self.tarif_lembur.value()
 
@@ -1267,24 +1300,21 @@ class GajiView(QWidget):
                     potong_bon = bon_lama if gaji_kotor >= bon_lama else gaji_kotor
                     gaji_bersih = gaji_kotor - potong_bon
 
-                    # Siapkan Item dan Berikan Hak Akses EDIT GANDA secara Pintar
                     for col_idx in range(11):
                         if not self.table_pasukan.item(r, col_idx): 
                             self.table_pasukan.setItem(r, col_idx, QTableWidgetItem())
                         
                         item = self.table_pasukan.item(r, col_idx)
-                        # Hanya Izinkan Edit Ganda untuk kolom Menit, Tarif, dan Potongan Kasbon
                         if col_idx in [3, 4, 5, 6, 9]:
                             item.setFlags(item.flags() | Qt.ItemFlag.ItemIsEditable)
                         else:
                             item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
 
-                    # Masukkan teks data ke sel sesuai dengan indeks kolom yang baru
                     self.table_pasukan.item(r, 2).setText(val_hadir)
                     self.table_pasukan.item(r, 3).setText(f"{val_nrml:g}")
-                    self.table_pasukan.item(r, 4).setText(f"{trf_normal:g}") # Tarif Normal
+                    self.table_pasukan.item(r, 4).setText(f"{trf_normal:g}") 
                     self.table_pasukan.item(r, 5).setText(f"{val_lmbr:g}")
-                    self.table_pasukan.item(r, 6).setText(f"{trf_lembur:g}") # Tarif Lembur
+                    self.table_pasukan.item(r, 6).setText(f"{trf_lembur:g}") 
                     self.table_pasukan.item(r, 7).setText(f"Rp {gaji_kotor:,.0f}")
                     self.table_pasukan.item(r, 8).setText(f"Rp {bon_lama:,.0f}")
                     self.table_pasukan.item(r, 9).setText(f"{potong_bon:g}")
@@ -1337,6 +1367,7 @@ class GajiView(QWidget):
                     person_ids_di_layar.append(int(it_id.text().strip()))
             balances_db = self.db.query(BonBalance).filter(BonBalance.person_id.in_(person_ids_di_layar)).all()
             dict_obj_balances = {b.person_id: b for b in balances_db}
+
             for row in range(self.table_pasukan.rowCount()):
                 try:
                     it_id = self.table_pasukan.item(row, 0)
@@ -1347,8 +1378,16 @@ class GajiView(QWidget):
                     txt_normal = self.table_pasukan.item(row, 3).text().strip() if self.table_pasukan.item(row, 3) else "0"
                     txt_lembur = self.table_pasukan.item(row, 5).text().strip() if self.table_pasukan.item(row, 5) else "0"
                     
+                    # [+] AMBIL TARIF DINAMIS LANGSUNG DARI SEL TABEL LAYAR (MENGAKOMODASI EDITAN KASIR)
+                    txt_trf_normal = self.table_pasukan.item(row, 4).text().strip() if self.table_pasukan.item(row, 4) else "0"
+                    txt_trf_lembur = self.table_pasukan.item(row, 6).text().strip() if self.table_pasukan.item(row, 6) else "0"
+
                     mnt_normal = float(txt_normal.replace(',', '')) if txt_normal else 0.0
                     mnt_lembur = float(txt_lembur.replace(',', '')) if txt_lembur else 0.0
+                    
+                    # Konversi nilai tarif dinamis per baris karyawan
+                    trf_normal_aktual = float(txt_trf_normal.replace(',', '')) if txt_trf_normal else 0.0
+                    trf_lembur_aktual = float(txt_trf_lembur.replace(',', '')) if txt_trf_lembur else 0.0
 
                     if mnt_normal == 0 and mnt_lembur == 0:
                         continue
@@ -1364,9 +1403,11 @@ class GajiView(QWidget):
                     gaji_bersih = float(it_bersih.text().replace('Rp ', '').replace(',', '').strip()) if it_bersih and it_bersih.text() else 0.0
 
                     sisa_bon_akhir = bon_lama - potong_bon
-                    keterangan = f"Hadir: {txt_hadir} | Normal: {mnt_normal:g} | Lembur: {mnt_lembur:g}"
+                    
+                    # Catat tarif yang digunakan ke dalam keterangan string sebagai cadangan visual
+                    keterangan = f"Hadir: {txt_hadir} | Normal: {mnt_normal:g} (@{trf_normal_aktual:g}) | Lembur: {mnt_lembur:g} (@{trf_lembur_aktual:g})"
 
-                    # Inisialisasi baris data ORM
+                    # 1. Simpan data induk run gaji
                     run = SalaryRun(
                         tipe="PASUKAN_KARYAWAN", person_id=p_id, tanggal_proses=tanggal_str,
                         gaji_kotor=gaji_kotor, bon_lama=bon_lama, tambah_bon=0,
@@ -1377,39 +1418,69 @@ class GajiView(QWidget):
                     self.db.flush() 
                     run_ids_to_print.append(run.id)
 
+                    # =======================================================
+                    # [+] SIMPAN TARIF AKTUAL SEBAGAI RINCIAN ITEM DETAIL KE SQLITE
+                    # =======================================================
+                    # Menyimpan Rincian Gaji Normal dengan Tarif Aktualnya
+                    if mnt_normal > 0:
+                        line_normal = SalaryLineItem(
+                            salary_run_id=run.id, sku_id=None,
+                            model_code="[GAJI_NORMAL]", 
+                            qty=mnt_normal, tarif_per_pcs=trf_normal_aktual, subtotal=(mnt_normal * trf_normal_aktual)
+                        )
+                        self.db.add(line_normal)
+                        
+                    # Menyimpan Rincian Gaji Lembur dengan Tarif Aktualnya
+                    if mnt_lembur > 0:
+                        line_lembur = SalaryLineItem(
+                            salary_run_id=run.id, sku_id=None,
+                            model_code="[GAJI_LEMBUR]", 
+                            qty=mnt_lembur, tarif_per_pcs=trf_lembur_aktual, subtotal=(mnt_lembur * trf_lembur_aktual)
+                        )
+                        self.db.add(line_lembur)
+
+                    # =======================================================
+                    # [+] SIMPAN HISTORI ABSENSI HARIAN DARI EXCEL CACHE
+                    # =======================================================
+                    p_nama = self.table_pasukan.item(row, 1).text().strip().lower() 
+                    if hasattr(self, 'cache_absensi_harian') and self.cache_absensi_harian:
+                        for cache_name, daily_list in self.cache_absensi_harian.items():
+                            if p_nama in cache_name or cache_name in p_nama:
+                                from data.models.salary import AttendanceRecord
+                                for harian in daily_list:
+                                    rec = AttendanceRecord(
+                                        salary_run_id=run.id, person_id=p_id,
+                                        tanggal=harian['tanggal'], tap_masuk=harian['masuk'], tap_keluar=harian['keluar'],
+                                        menit_normal=harian['menit_normal'], menit_lembur=harian['menit_lembur']
+                                    )
+                                    self.db.add(rec)
+                                break 
+
                     # Update Saldo Kasbon Karyawan
                     if potong_bon > 0:
-                        balance = dict_obj_balances.get(p_id) # Ambil object dari RAM
+                        balance = dict_obj_balances.get(p_id)
                         if balance:
                             balance.saldo -= potong_bon
                             self.db.add(BonMovement(person_id=p_id, tanggal=tanggal_str, tipe="POTONG_GAJI", nominal=potong_bon, sumber="PAYROLL_KARYAWAN"))
 
                     jml_berhasil += 1
-
                 except ValueError:
                     continue
 
-            # 1. Commit Semua ke Database secara final
             self.db.commit()
             if hasattr(self, 'notifier') and self.notifier:
-                print("[*] Broadcasting database changes to all menus...")
                 self.notifier.database_changed.emit()
                 
             if run_ids_to_print:
-                if hasattr(self, 'btn_submit_pasukan'):
-                    self.btn_submit_pasukan.setEnabled(False)
-                    self.btn_submit_pasukan.setText("Memproses PDF...")
-
-                self.pdf_thread = PDFWorker(run_ids_to_print)
+                # Triger pencetakan massal PDF
+                for s_id in run_ids_to_print:
+                    generate_salary_slip(s_id)
                 
-                self.pdf_thread.finished.connect(self._on_pdf_batch_success)
-                self.pdf_thread.error.connect(self._on_pdf_batch_error)
-                
-                self.pdf_thread.start() 
-                
-                # NOTE: Kode di sini akan langsung selesai (tidak menunggu PDF selesai dicetak),
-                # UI langsung merespons dan kasir bisa melihat animasi berjalan lancar!
-                
+                export_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "exports", "slips")
+                if os.path.exists(export_dir): os.startfile(export_dir)
+                QMessageBox.information(self, "Sukses!", f"{len(run_ids_to_print)} Slip Gaji Karyawan berhasil disimpan dengan tarif kustom dan PDF telah dibuat!")
+                self.load_karyawan_data() 
+                self.recalc_pasukan()
             else:
                 QMessageBox.warning(self, "Kosong", "Tidak ada data gaji karyawan yang valid untuk diproses.")
 

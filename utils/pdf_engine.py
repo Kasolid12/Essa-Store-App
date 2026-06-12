@@ -222,13 +222,67 @@ def generate_salary_slip(salary_run_id):
         # BAGIAN 1C: RINCIAN JAM KERJA (Khusus Karyawan)
         # ========================================================
         elif run.tipe == "PASUKAN_KARYAWAN":
-            catatan = run.catatan or "Tidak ada catatan jam kerja"
-            c.setFont("Courier-Bold", 10)
-            c.drawString(10*mm, y, "RINCIAN JAM KERJA (MINGGUAN):")
+            from data.models.salary import AttendanceRecord, SalaryLineItem
+
+            # 1. Tarik riwayat kedatangan harian
+            attendances = db.query(AttendanceRecord).filter(AttendanceRecord.salary_run_id == run.id).all()
+
+            c.setFont("Courier-Bold", 8)
+            c.drawString(10*mm, y, "Tanggal")
+            c.drawString(35*mm, y, "Masuk")
+            c.drawString(55*mm, y, "Keluar")
+            c.drawRightString(95*mm, y, "Tot. Menit")
+            c.drawRightString(138*mm, y, "Lembur")
+            
+            c.line(10*mm, y-2*mm, 138*mm, y-2*mm)
             y -= 6*mm
+
+            c.setFont("Courier", 8)
+            if attendances:
+                for att in attendances:
+                    c.drawString(10*mm, y, str(att.tanggal))
+                    c.drawString(35*mm, y, str(att.tap_masuk))
+                    c.drawString(55*mm, y, str(att.tap_keluar))
+                    c.drawRightString(95*mm, y, f"{att.menit_normal:g}")
+                    c.drawRightString(138*mm, y, f"{att.menit_lembur:g}")
+                    y -= 5*mm
+                    if y < 45*mm: c.showPage(); draw_header(); y = height - 45*mm; c.setFont("Courier", 8)
+            else:
+                c.drawString(10*mm, y, "Data rincian harian (tap) tidak tersedia dari Excel.")
+                y -= 5*mm
+
+            # 2. Tarik nilai tarif dinamis yang terekam di line items detail komponen
+            line_items = db.query(SalaryLineItem).filter(SalaryLineItem.salary_run_id == run.id).all()
+            
+            # Buat nilai fallback default jika seandainya data line items kosong
+            qty_normal, tarif_normal, subtotal_normal = 0, 150.0, 0
+            qty_lembur, tarif_lembur, subtotal_lembur = 0, 160.0, 0
+            
+            for item in line_items:
+                if item.model_code == "[GAJI_NORMAL]":
+                    qty_normal = item.qty
+                    tarif_normal = item.tarif_per_pcs
+                    subtotal_normal = item.subtotal
+                elif item.model_code == "[GAJI_LEMBUR]":
+                    qty_lembur = item.qty
+                    tarif_lembur = item.tarif_per_pcs
+                    subtotal_lembur = item.subtotal
+
+            y -= 2*mm
+            c.setFont("Courier-Bold", 9)
+            c.drawString(10*mm, y, "RINCIAN PEMBAYARAN:")
+            y -= 6*mm
+            
+            # Tulis baris slip menggunakan tarif kustom hasil editan kasir di tabel
             c.setFont("Courier", 9)
-            # Menampilkan agregat mingguan: Hadir, Normal, Lembur
-            c.drawString(15*mm, y, f"- {catatan}")
+            c.drawString(10*mm, y, f"Gaji Normal ({qty_normal:g} mnt @Rp {tarif_normal:g})")
+            c.drawString(75*mm, y, ":")
+            c.drawRightString(138*mm, y, format_rupiah(subtotal_normal))
+            y -= 5*mm
+            
+            c.drawString(10*mm, y, f"Gaji Lembur ({qty_lembur:g} mnt @Rp {tarif_lembur:g})")
+            c.drawString(75*mm, y, ":")
+            c.drawRightString(138*mm, y, format_rupiah(subtotal_lembur))
             y -= 10*mm
 
         # ========================================================
