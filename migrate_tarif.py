@@ -1,105 +1,126 @@
-import sqlite3
-import os
-import openpyxl
+import sys
+import pandas as pd
+import math
 
-def run_import():
-    db_path = 'essa.db'
-    excel_path = 'Master_tarif.xlsx' # Pastikan nama file Excel kamu sudah sesuai
+from data.database import SessionLocal
+from data.models import SkuMaster
+from data.models.master import TarifMaster
+from data.models.salary import MasterTarifPenjahit
 
-    if not os.path.exists(db_path):
-        print(f"❌ Error: Database {db_path} tidak ditemukan!")
-        return
-        
-    if not os.path.exists(excel_path):
-        print(f"❌ Error: File Excel '{excel_path}' tidak ditemukan di folder ini!")
-        return
+def clean_nan(val, default_val=0.0):
+    if pd.isna(val) or math.isnan(val):
+        return default_val
+    return float(val)
 
-    conn = sqlite3.connect(db_path)
-    cursor = conn.cursor()
+def clean_text(val):
+    if pd.isna(val):
+        return ""
+    return str(val).strip()
 
-    print("1. Memeriksa/Membuat tabel tarif_master di database...")
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS tarif_master (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            kode_sku VARCHAR NOT NULL UNIQUE,
-            tarif_jahit FLOAT DEFAULT 0.0,
-            tarif_pengsup_kain FLOAT DEFAULT 0.0,
-            tarif_pengsup_potongan FLOAT DEFAULT 0.0
-        )
-    """)
-
-    # Membaca file Excel (data_only=True agar membaca nilai akhirnya, bukan rumusnya)
+def import_master_tarif(excel_file_path):
+    print(f"[*] Memulai import data dari {excel_file_path}...")
+    db = SessionLocal()
+    
     try:
-        print(f"Membuka file {excel_path}...")
-        wb = openpyxl.load_workbook(excel_path, data_only=True)
-    except Exception as e:
-        print(f"❌ Gagal membuka file Excel: {e}")
-        return
-
-    # ========================================================
-    # 2. IMPORT DATA DARI SHEET: SKU_Penjahit
-    # ========================================================
-    if 'SKU_Penjahit' in wb.sheetnames:
-        print("2. Membaca data dari sheet 'SKU_Penjahit'...")
-        sheet_penjahit = wb['SKU_Penjahit']
-        
-        # Mulai dari baris ke-2 (melewati header "SKU" dan "Harga Satuan")
-        for row in sheet_penjahit.iter_rows(min_row=2, values_only=True):
-            sku = str(row[0]).strip() if row[0] else ""
-            harga_str = str(row[1]).replace(',', '').strip() if row[1] else "0"
+        # ==========================================
+        # 1. IMPORT SHEET PENG-SUP (SKU_Pengsup)
+        # ==========================================
+        print("[*] Membaca Sheet: SKU_Pengsup...")
+        try:
+            df_pengsup = pd.read_excel(excel_file_path, sheet_name='SKU_Pengsup')
             
-            try:
-                harga = float(harga_str)
-            except ValueError:
-                harga = 0.0
-
-            # Jika SKU tidak kosong, masukkan ke database
-            if sku and sku != "None":
-                cursor.execute("""
-                    INSERT INTO tarif_master (kode_sku, tarif_jahit)
-                    VALUES (?, ?)
-                    ON CONFLICT(kode_sku) DO UPDATE SET tarif_jahit=excluded.tarif_jahit
-                """, (sku, harga))
-    else:
-        print("⚠️ Peringatan: Sheet dengan nama 'SKU_Penjahit' tidak ditemukan!")
-
-    # ========================================================
-    # 3. IMPORT DATA DARI SHEET: SKU_Pengsup
-    # ========================================================
-    if 'SKU_Pengsup' in wb.sheetnames:
-        print("3. Membaca data dari sheet 'SKU_Pengsup'...")
-        sheet_pengsup = wb['SKU_Pengsup']
-        
-        # Mulai dari baris ke-2 (melewati header "Nomor SKU", "Kain", "Potongan")
-        for row in sheet_pengsup.iter_rows(min_row=2, values_only=True):
-            sku = str(row[0]).strip() if row[0] else ""
-            kain_str = str(row[1]).replace(',', '').strip() if row[1] else "0"
-            potongan_str = str(row[2]).replace(',', '').strip() if row[2] else "0"
-            
-            try:
-                kain = float(kain_str)
-            except ValueError:
-                kain = 0.0
+            for index, row in df_pengsup.iterrows():
+                kode_sku = clean_text(row.get('Nomor SKU'))
                 
-            try:
-                potongan = float(potongan_str)
-            except ValueError:
-                potongan = 0.0
+                if not kode_sku or kode_sku.lower() == 'nan':
+                    continue
+                
+                kain = clean_nan(row.get('Kain'))
+                potongan = clean_nan(row.get('Potongan'))
 
-            if sku and sku != "None":
-                cursor.execute("""
-                    INSERT INTO tarif_master (kode_sku, tarif_pengsup_kain, tarif_pengsup_potongan)
-                    VALUES (?, ?, ?)
-                    ON CONFLICT(kode_sku) DO UPDATE SET 
-                    tarif_pengsup_kain=excluded.tarif_pengsup_kain,
-                    tarif_pengsup_potongan=excluded.tarif_pengsup_potongan
-                """, (sku, kain, potongan))
-    else:
-        print("⚠️ Peringatan: Sheet dengan nama 'SKU_Pengsup' tidak ditemukan!")
+                # 1A. SkuMaster
+                sku = db.query(SkuMaster).filter(SkuMaster.kode_sku == kode_sku).first()
+                if not sku:
+                    sku = SkuMaster(kode_sku=kode_sku, nama_produk=kode_sku)
+                    db.add(sku)
+                    db.flush()
+                
+                # 1B. TarifMaster (Update tarif pengsup kain & potongan sesuai model master.md)
+                tarif = db.query(TarifMaster).filter(TarifMaster.kode_sku == kode_sku).first()
+                if not tarif:
+                    tarif = TarifMaster(
+                        kode_sku=kode_sku,
+                        tarif_pengsup_kain=kain,
+                        tarif_pengsup_potongan=potongan
+                    )
+                    db.add(tarif)
+                else:
+                    tarif.tarif_pengsup_kain = kain
+                    tarif.tarif_pengsup_potongan = potongan
+            
+            print(f"[✓] Berhasil memproses data Pengsup ({len(df_pengsup)} baris).")
+        except ValueError:
+            print("[-] Peringatan: Sheet 'SKU_Pengsup' tidak ditemukan di Excel, dilewati.")
 
-    conn.commit()
-    conn.close()
-    print("✅ Selesai! Data Master Tarif sukses diimpor dan disinkronisasi dari file Excel.")
+        # ==========================================
+        # 2. IMPORT SHEET PENJAHIT (SKU_Penjahit)
+        # ==========================================
+        print("\n[*] Membaca Sheet: SKU_Penjahit...")
+        try:
+            df_penjahit = pd.read_excel(excel_file_path, sheet_name='SKU_Penjahit')
+            
+            for index, row in df_penjahit.iterrows():
+                kode_sku = clean_text(row.get('SKU'))
+                
+                if not kode_sku or kode_sku.lower() == 'nan':
+                    continue
+                
+                harga_satuan = clean_nan(row.get('Harga Satuan'))
 
-if __name__ == '__main__':
-    run_import()
+                # 2A. SkuMaster
+                sku = db.query(SkuMaster).filter(SkuMaster.kode_sku == kode_sku).first()
+                if not sku:
+                    sku = SkuMaster(kode_sku=kode_sku, nama_produk=f"Produk {kode_sku}")
+                    db.add(sku)
+                    db.flush()
+                
+                # 2B. TarifMaster (Update tarif_jahit sesuai model master.md)
+                tarif = db.query(TarifMaster).filter(TarifMaster.kode_sku == kode_sku).first()
+                if not tarif:
+                    tarif = TarifMaster(
+                        kode_sku=kode_sku,
+                        tarif_jahit=harga_satuan
+                    )
+                    db.add(tarif)
+                else:
+                    tarif.tarif_jahit = harga_satuan
+
+                # 2C. MasterTarifPenjahit (Update tabel khusus untuk Gaji Penjahit sesuai salary.md)
+                mtp = db.query(MasterTarifPenjahit).filter(MasterTarifPenjahit.kode_garapan == kode_sku).first()
+                if not mtp:
+                    mtp = MasterTarifPenjahit(
+                        kode_garapan=kode_sku,
+                        harga=harga_satuan
+                    )
+                    db.add(mtp)
+                else:
+                    mtp.harga = harga_satuan
+            
+            print(f"[✓] Berhasil memproses data Penjahit ({len(df_penjahit)} baris).")
+        except ValueError:
+            print("[-] Peringatan: Sheet 'SKU_Penjahit' tidak ditemukan di Excel, dilewati.")
+
+        db.commit()
+        print("\n[★] IMPORT DATABASE SELESAI DAN SUKSES DISIMPAN! [★]")
+
+    except Exception as e:
+        db.rollback()
+        print(f"\n[!] TERJADI KESALAHAN FATAL: {e}")
+    finally:
+        db.close()
+
+if __name__ == "__main__":
+    NAMA_FILE_EXCEL = "Master_tarif.xlsx" # Pastikan nama file excelnya sudah benar
+    
+    print("=== ESSA STORE: MASTER DATA MIGRATION TOOL ===")
+    import_master_tarif(NAMA_FILE_EXCEL)

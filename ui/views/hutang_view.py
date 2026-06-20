@@ -170,6 +170,11 @@ class HutangView(QWidget):
         self.btn_brg_lunas.setEnabled(False)
         self.btn_brg_lunas.clicked.connect(self.submit_barang_pelunasan)
         
+        self.btn_batal_lunas_brg = CyberButton("BATAL LUNAS (SET OPEN)", is_danger=True)
+        self.btn_batal_lunas_brg.setEnabled(False)
+        self.btn_batal_lunas_brg.clicked.connect(self.submit_batal_lunas_barang)
+        lay_lunas.addWidget(self.btn_batal_lunas_brg)
+        
         form_lunas.addWidget(QLabel("Tgl Bayar:"), 0, 0); form_lunas.addWidget(self.brg_lunas_date, 0, 1)
         form_lunas.addWidget(QLabel("Nominal (Otomatis Dibagi):"), 1, 0); form_lunas.addWidget(self.brg_lunas_nom, 1, 1)
         
@@ -282,6 +287,11 @@ class HutangView(QWidget):
         self.btn_mod_lunas.setEnabled(False)
         self.btn_mod_lunas.clicked.connect(self.submit_modal_pelunasan)
         
+        self.btn_batal_lunas_mod = CyberButton("BATAL LUNAS (SET OPEN)", is_danger=True)
+        self.btn_batal_lunas_mod.setEnabled(False)
+        self.btn_batal_lunas_mod.clicked.connect(self.submit_batal_lunas_modal)
+        lay_lunas.addWidget(self.btn_batal_lunas_mod)
+        
         form_lunas.addWidget(QLabel("Tgl Deposit:"), 0, 0); form_lunas.addWidget(self.mod_lunas_date, 0, 1)
         form_lunas.addWidget(QLabel("Nominal (Otomatis Dibagi):"), 1, 0); form_lunas.addWidget(self.mod_lunas_nom, 1, 1)
         
@@ -386,38 +396,52 @@ class HutangView(QWidget):
             self.table_modal.setItem(r, 7, status_item)
 
     def on_barang_selected(self):
-        # 1. Bersihkan memory pelunasan lama
         self.selected_barang_debt_ids.clear()
-        
         selected_items = self.table_barang.selectedItems()
-        if not selected_items: 
+        
+        if not selected_items:
             self.btn_brg_lunas.setEnabled(False)
+            if hasattr(self, 'btn_batal_lunas_brg'):
+                self.btn_batal_lunas_brg.setEnabled(False)
+            self.brg_lunas_nom.setValue(0)
             return
 
-        # 2. Saring agar hanya mendapatkan Nomor Baris yang unik (tidak duplikat per kolom)
         selected_rows = list(set(item.row() for item in selected_items))
-        total_sisa_tagihan_terpilih = 0
-        
-        # 3. Proses untuk Mode Pelunasan (Bisa Banyak Baris)
+        total_kalkulasi = 0
+        ada_open = False
+        ada_lunas = False
+
         for row in selected_rows:
             debt_id = int(self.table_barang.item(row, 0).text())
+            status = self.table_barang.item(row, 7).text().strip().upper()
             debt = self.db.query(DebtEntry).get(debt_id)
+            
             if debt:
                 terbayar = self.calculate_paid(debt)
                 sisa = debt.nominal_hutang - terbayar
-                if sisa > 0: # Hanya masukkan ke list jika hutang belum Lunas
-                    self.selected_barang_debt_ids.append((debt_id, sisa))
-                    total_sisa_tagihan_terpilih += sisa
-        
-        # 4. Aktifkan tombol Pelunasan & Auto-Isi Nominal jika ada yang bisa dibayar
-        if self.selected_barang_debt_ids:
-            self.btn_brg_lunas.setEnabled(True)
-            self.brg_lunas_nom.setValue(total_sisa_tagihan_terpilih) # FITUR BARU: Auto Kalkulasi
-        else:
-            self.btn_brg_lunas.setEnabled(False)
-            self.brg_lunas_nom.setValue(0)
+                
+                # Jika OPEN/PARTIAL, catat sisa hutangnya untuk dibayar
+                if status == 'OPEN' or status == 'PARTIAL':
+                    ada_open = True
+                    if sisa > 0:
+                        self.selected_barang_debt_ids.append((debt_id, sisa))
+                        total_kalkulasi += sisa
+                        
+                # Jika LUNAS, catat total hutangnya (untuk kalkulator view) & bypass nilai sisa jadi 0
+                elif status == 'LUNAS':
+                    ada_lunas = True
+                    self.selected_barang_debt_ids.append((debt_id, 0)) 
+                    total_kalkulasi += debt.nominal_hutang
 
-        # 5. Proses untuk Form Edit (Ambil data dari baris PERTAMA yang diklik saja)
+        # 1. FITUR BARU: Nominal pelunasan tetap muncul!
+        self.brg_lunas_nom.setValue(total_kalkulasi) 
+        
+        # 2. Smart Disable Button
+        self.btn_brg_lunas.setEnabled(ada_open)
+        if hasattr(self, 'btn_batal_lunas_brg'):
+            self.btn_batal_lunas_brg.setEnabled(ada_lunas)
+
+        # Proses untuk Form Edit (Ambil data dari baris PERTAMA yang diklik)
         first_row = selected_rows[0]
         self.selected_barang_edit_id = int(self.table_barang.item(first_row, 0).text())
 
@@ -426,7 +450,7 @@ class HutangView(QWidget):
             self.brg_date.setDate(QDate.fromString(debt.tanggal, "yyyy-MM-dd"))
             idx_person = self.brg_person.findData(debt.person_id)
             if idx_person >= 0: self.brg_person.setCurrentIndex(idx_person)
-            
+
             idx_sku = self.brg_sku.findData(debt.sku_id)
             if idx_sku >= 0: self.brg_sku.setCurrentIndex(idx_sku)
 
@@ -451,37 +475,47 @@ class HutangView(QWidget):
             self.btn_delete_brg.setEnabled(True)
 
     def on_modal_selected(self):
-        # 1. Bersihkan memory deposit lama
         self.selected_modal_debt_ids.clear()
-        
         selected_items = self.table_modal.selectedItems()
-        if not selected_items: 
+        
+        if not selected_items:
             self.btn_mod_lunas.setEnabled(False)
+            if hasattr(self, 'btn_batal_lunas_mod'):
+                self.btn_batal_lunas_mod.setEnabled(False)
+            self.mod_lunas_nom.setValue(0)
             return
 
         selected_rows = list(set(item.row() for item in selected_items))
-        total_sisa_tagihan_terpilih = 0
-        
-        # 2. Proses untuk Mode Deposit (Bisa Banyak Baris)
+        total_kalkulasi = 0
+        ada_open = False
+        ada_lunas = False
+
         for row in selected_rows:
             debt_id = int(self.table_modal.item(row, 0).text())
+            status = self.table_modal.item(row, 7).text().strip().upper()
             debt = self.db.query(DebtEntry).get(debt_id)
+            
             if debt:
                 terbayar = self.calculate_paid(debt)
                 sisa = debt.nominal_hutang - terbayar
-                if sisa > 0: # Hanya setujui jika masih ada sisa tagihan
-                    self.selected_modal_debt_ids.append((debt_id, sisa))
-                    total_sisa_tagihan_terpilih += sisa
-        
-        # 3. Aktifkan tombol Setor Deposit & Auto-Isi Nominal
-        if self.selected_modal_debt_ids:
-            self.btn_mod_lunas.setEnabled(True)
-            self.mod_lunas_nom.setValue(total_sisa_tagihan_terpilih) # FITUR BARU: Auto Kalkulasi
-        else:
-            self.btn_mod_lunas.setEnabled(False)
-            self.mod_lunas_nom.setValue(0)
+                
+                if status == 'OPEN' or status == 'PARTIAL':
+                    ada_open = True
+                    if sisa > 0:
+                        self.selected_modal_debt_ids.append((debt_id, sisa))
+                        total_kalkulasi += sisa
+                        
+                elif status == 'LUNAS':
+                    ada_lunas = True
+                    self.selected_modal_debt_ids.append((debt_id, 0))
+                    total_kalkulasi += debt.nominal_hutang
 
-        # 4. Proses untuk Form Edit (Ambil data dari baris PERTAMA yang diklik saja)
+        self.mod_lunas_nom.setValue(total_kalkulasi)
+        self.btn_mod_lunas.setEnabled(ada_open)
+        if hasattr(self, 'btn_batal_lunas_mod'):
+            self.btn_batal_lunas_mod.setEnabled(ada_lunas)
+
+        # Proses untuk Form Edit (Ambil data dari baris PERTAMA yang diklik)
         first_row = selected_rows[0]
         self.selected_modal_edit_id = int(self.table_modal.item(first_row, 0).text())
 
@@ -492,7 +526,7 @@ class HutangView(QWidget):
             if idx_person >= 0: self.mod_person.setCurrentIndex(idx_person)
 
             self.mod_jenis.setCurrentText(debt.keterangan)
-            
+
             if debt.kode_produksi:
                 self.mod_kode_produksi.setText(debt.kode_produksi)
 
@@ -528,6 +562,7 @@ class HutangView(QWidget):
         self.brg_qty.setValue(0)
         self.brg_total.setValue(0)
         self.brg_lunas_nom.setValue(0)
+        if hasattr(self, 'btn_batal_lunas_brg'): self.btn_batal_lunas_brg.setEnabled(False)
 
     def reset_modal_form(self):
         self.selected_modal_edit_id = None
@@ -546,6 +581,7 @@ class HutangView(QWidget):
         self.lbl_selected_mod.setText("PILIH PINJAMAN UNTUK DEPOSIT (Bisa Lebih Dari 1)")
         self.mod_total.setValue(0)
         self.mod_lunas_nom.setValue(0)
+        if hasattr(self, 'btn_batal_lunas_mod'): self.btn_batal_lunas_mod.setEnabled(False)
         
         # Otomatis buatkan kode produksi urutan selanjutnya
         self.generate_kode_produksi()
@@ -859,6 +895,59 @@ class HutangView(QWidget):
             self.db.expire_all()
             QMessageBox.critical(self, "Error", f"Gagal memproses batch deposit: {e}")
 
+    def submit_batal_lunas_barang(self):
+        if not self.selected_barang_debt_ids: return
+        reply = QMessageBox.question(self, "Konfirmasi Batal", "Yakin ingin membatalkan pelunasan (SET OPEN) untuk data terpilih?\n\nSemua riwayat pembayaran (nota lunas) dari baris ini akan dihapus.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+        
+        if reply == QMessageBox.StandardButton.Yes:
+            try:
+                for d_id, _ in self.selected_barang_debt_ids:
+                    debt = self.db.query(DebtEntry).get(d_id)
+                    if debt and debt.status == 'LUNAS':
+                        # WAJIB menghapus riwayat pembayarannya agar nilai 'terbayar' kembali jadi 0
+                        for p in self.db.query(DebtPayment).filter(DebtPayment.debt_entry_id == debt.id).all():
+                            self.db.delete(p)
+                        debt.status = 'OPEN'
+                        
+                self.db.commit()
+                if hasattr(self, 'notifier') and self.notifier:
+                    self.notifier.database_changed.emit()
+                    
+                self.load_barang_terhutang()
+                self.reset_barang_form()
+                QMessageBox.information(self, "Sukses", "Status hutang barang berhasil dikembalikan menjadi OPEN dan riwayat pembayaran dihapus.")
+            except Exception as e:
+                self.db.rollback()
+                self.db.expire_all()
+                QMessageBox.critical(self, "Error", f"Gagal merubah status: {e}")
+
+    def submit_batal_lunas_modal(self):
+        if not self.selected_modal_debt_ids: return
+        reply = QMessageBox.question(self, "Konfirmasi Batal", "Yakin ingin membatalkan deposit/lunas (SET OPEN) untuk data terpilih?\n\nSemua riwayat deposit pada baris ini akan dihapus.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+        
+        if reply == QMessageBox.StandardButton.Yes:
+            try:
+                for d_id, _ in self.selected_modal_debt_ids:
+                    debt = self.db.query(DebtEntry).get(d_id)
+                    if debt and debt.status == 'LUNAS':
+                        for p in self.db.query(DebtPayment).filter(DebtPayment.debt_entry_id == debt.id).all():
+                            self.db.delete(p)
+                        debt.status = 'OPEN'
+                        
+                self.db.commit()
+                if hasattr(self, 'notifier') and self.notifier:
+                    self.notifier.database_changed.emit()
+                    
+                self.load_modal_hutang()
+                self.reset_modal_form()
+                QMessageBox.information(self, "Sukses", "Status hutang modal berhasil dikembalikan menjadi OPEN.")
+            except Exception as e:
+                self.db.rollback()
+                self.db.expire_all()
+                QMessageBox.critical(self, "Error", f"Gagal merubah status: {e}")
+    
     def closeEvent(self, event):
         self.db.close()
         super().closeEvent(event)

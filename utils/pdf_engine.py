@@ -447,18 +447,18 @@ def generate_batch_receipt_pdf(nama_supplier, tipe_hutang, nominal_uang, items, 
     width, height = portrait(A5)
     
     # --- HEADER ---
-    c.setFont("Courier-Bold", 14)
+    c.setFont("Courier-Bold", 16)
     c.drawCentredString(width / 2.0, height - 15*mm, "NOTA PEMBAYARAN / DEPOSIT")
     
-    c.setFont("Courier", 10)
+    c.setFont("Courier", 12)
     c.drawCentredString(width / 2.0, height - 20*mm, "=" * 50)
     
     # --- SUPPLIER INFO ---
-    c.setFont("Courier-Bold", 11)
+    c.setFont("Courier-Bold", 12)
     c.drawString(15*mm, height - 30*mm, "NAMA SUPPLIER :")
     c.drawString(55*mm, height - 30*mm, nama_supplier.upper())
     
-    c.setFont("Courier", 10)
+    c.setFont("Courier", 11)
     c.drawString(15*mm, height - 36*mm, "TGL BAYAR     :")
     c.drawString(55*mm, height - 36*mm, datetime.now().strftime("%d-%m-%Y"))
     
@@ -467,12 +467,12 @@ def generate_batch_receipt_pdf(nama_supplier, tipe_hutang, nominal_uang, items, 
 
     # --- ITEM LIST HEADER ---
     y = height - 55*mm
-    c.setFont("Courier-Bold", 10)
+    c.setFont("Courier-Bold", 11)
     c.drawString(15*mm, y, "--- REFERENSI TRANSAKSI TERPILIH ---")
     y -= 8*mm
     
     # NEW: Table Headers matching the old app
-    c.setFont("Courier-Bold", 8)
+    c.setFont("Courier-Bold", 10)
     c.drawString(15*mm, y, "TGL")
     c.drawString(32*mm, y, "DESKRIPSI")
     c.drawString(78*mm, y, "QTY")
@@ -483,7 +483,7 @@ def generate_batch_receipt_pdf(nama_supplier, tipe_hutang, nominal_uang, items, 
     y -= 5*mm
 
     # --- ITEM ROWS ---
-    c.setFont("Courier", 8)
+    c.setFont("Courier", 9)
     for item in items:
         c.drawString(15*mm, y, str(item['tgl'])[5:10]) # Just show MM-DD to save space
         
@@ -506,23 +506,23 @@ def generate_batch_receipt_pdf(nama_supplier, tipe_hutang, nominal_uang, items, 
 
     # --- FINANCIAL SUMMARY ---
     y -= 5*mm
-    c.setFont("Courier-Bold", 10)
+    c.setFont("Courier-Bold", 12)
     c.drawString(15*mm, y, "--- RINCIAN PEMBAYARAN BUKU BESAR ---")
     y -= 8*mm
     
-    c.setFont("Courier", 10)
+    c.setFont("Courier", 12)
     c.drawString(15*mm, y, "1. Sisa Hutang (Awal) :")
     c.drawRightString(133*mm, y, f"Rp {sisa_awal:,.0f}")
     y -= 6*mm
     
-    c.setFont("Courier-Bold", 12)
+    c.setFont("Courier-Bold", 14)
     c.drawString(15*mm, y, "2. TOTAL KAS DIBAYAR  :")
     c.drawRightString(133*mm, y, f"Rp {nominal_uang:,.0f}")
     y -= 4*mm
     c.line(15*mm, y, 133*mm, y)
     y -= 6*mm
     
-    c.setFont("Courier", 10)
+    c.setFont("Courier", 12)
     c.drawString(15*mm, y, "3. Sisa Hutang Akhir  :")
     c.drawRightString(133*mm, y, f"Rp {sisa_akhir:,.0f}")
     
