@@ -8,11 +8,14 @@ from PySide6.QtGui import QFont
 
 from ui.components.buttons import CyberButton
 from ui.theme import Theme
+from datetime import datetime
+
 from data.database import SessionLocal
 from data.models.debt import DebtEntry
 from data.models.catatan_harian import HasilCutting, DistribusiCutting
 from data.models.sku import SkuMaster
 from data.models.master import TarifMaster
+from data.models.profit_history import ProfitHistory
 
 class ProfitSimulationView(QWidget):
     def __init__(self, notifier=None):
@@ -183,14 +186,21 @@ class ProfitSimulationView(QWidget):
 
     def load_kode_produksi(self):
         """Menarik list kode produksi langsung dari database (Tabel Hutang Modal)"""
+        # Ingat pilihan saat ini supaya tidak hilang ketika combo di-reload
+        # (mis. oleh refresh_harian_tables setelah profit disimpan).
+        prev_kode = self.cb_kode_prod.currentText()
         self.cb_kode_prod.clear()
-        
+
         # Tarik semua kode_produksi yang tidak kosong dari DebtEntry
         kodes = self.db.query(DebtEntry.kode_produksi).filter(DebtEntry.kode_produksi.isnot(None)).distinct().all()
         kode_list = sorted([k[0] for k in kodes if k[0]], reverse=True)
-        
+
         if kode_list:
             self.cb_kode_prod.addItems(kode_list)
+            # Kembalikan pilihan sebelumnya bila masih tersedia
+            idx = self.cb_kode_prod.findText(prev_kode)
+            if idx >= 0:
+                self.cb_kode_prod.setCurrentIndex(idx)
         else:
             self.cb_kode_prod.addItem("-- Belum ada data produksi --")
 
@@ -210,7 +220,7 @@ class ProfitSimulationView(QWidget):
         """Mencari ongkos jahit (Home) dari TarifMaster"""
         # 1. Cek kecocokan persis (misal: "DG-L")
         tarif = self.db.query(TarifMaster).filter(TarifMaster.kode_sku == sku_kode).first()
-        if tarif and tarif.tarif_jahit > 0:
+        if tarif and (tarif.tarif_jahit or 0) > 0:
             return tarif.tarif_jahit
 
         # 2. Fallback 1: Coba cari Base-Size (Misal sku aslinya "DG-Almond-L", kita cari "DG-L")
@@ -218,12 +228,12 @@ class ProfitSimulationView(QWidget):
         if size:
             fallback_1 = f"{base}-{size}"
             tarif_f1 = self.db.query(TarifMaster).filter(TarifMaster.kode_sku == fallback_1).first()
-            if tarif_f1 and tarif_f1.tarif_jahit > 0:
+            if tarif_f1 and (tarif_f1.tarif_jahit or 0) > 0:
                 return tarif_f1.tarif_jahit
 
         # 3. Fallback 2: Coba cari Base-nya saja (Misal "DG")
         tarif_f2 = self.db.query(TarifMaster).filter(TarifMaster.kode_sku == base).first()
-        if tarif_f2 and tarif_f2.tarif_jahit > 0:
+        if tarif_f2 and (tarif_f2.tarif_jahit or 0) > 0:
             return tarif_f2.tarif_jahit
 
         # Default terakhir jika SKU benar-benar belum didaftarkan di Master
@@ -233,7 +243,7 @@ class ProfitSimulationView(QWidget):
         """Mencari ongkos potong (Pengsup) menggunakan kolom 'Potongan'"""
         # 1. Cek kecocokan persis (karena Pengsup biasanya mendata sampai ke warna, misal "DG-Almond-L")
         tarif = self.db.query(TarifMaster).filter(TarifMaster.kode_sku == sku_kode).first()
-        if tarif and tarif.tarif_pengsup_potongan > 0:
+        if tarif and (tarif.tarif_pengsup_potongan or 0) > 0:
             return tarif.tarif_pengsup_potongan
 
         # 2. Fallback (Jaga-jaga jika warna baru belum didaftarkan, ambil harga Base-Size)
@@ -241,11 +251,11 @@ class ProfitSimulationView(QWidget):
         if size:
             fallback_1 = f"{base}-{size}"
             tarif_f1 = self.db.query(TarifMaster).filter(TarifMaster.kode_sku == fallback_1).first()
-            if tarif_f1 and tarif_f1.tarif_pengsup_potongan > 0:
+            if tarif_f1 and (tarif_f1.tarif_pengsup_potongan or 0) > 0:
                 return tarif_f1.tarif_pengsup_potongan
 
         tarif_f2 = self.db.query(TarifMaster).filter(TarifMaster.kode_sku == base).first()
-        if tarif_f2 and tarif_f2.tarif_pengsup_potongan > 0:
+        if tarif_f2 and (tarif_f2.tarif_pengsup_potongan or 0) > 0:
             return tarif_f2.tarif_pengsup_potongan
 
         return 1500.0
@@ -253,7 +263,8 @@ class ProfitSimulationView(QWidget):
     def get_harga_jual(self, sku_kode):
         """Mencari harga jual resmi untuk estimasi omzet"""
         sku = self.db.query(SkuMaster).filter(SkuMaster.kode_sku == sku_kode).first()
-        if sku: return sku.harga_jual
+        if sku and sku.harga_jual is not None:
+            return sku.harga_jual
         return 0.0
 
     def proses_analisis(self):
@@ -375,9 +386,79 @@ class ProfitSimulationView(QWidget):
             else:
                 self.lbl_net.setStyleSheet(f"font-size: 24pt; font-weight: bold; color: #ff5252;") # Merah Neon
 
+            # --- SIMPAN HASIL KALKULASI KE profit_history (upsert per batch) ---
+            # Kegagalan menyimpan TIDAK boleh membatalkan tampilan yang sudah benar.
+            try:
+                self.save_profit_history(
+                    hutangs=hutangs,
+                    cuttings=cuttings,
+                    target_kode=target_kode,
+                    total_revenue=total_revenue,
+                    kain_total=kain_total,
+                    cost_produksi_total=cost_home_total + cost_sup_total,
+                    net_profit=net_profit,
+                    dist_home=dist_home,
+                    dist_sup=dist_sup,
+                )
+            except Exception as e_save:
+                self.db.rollback()
+                QMessageBox.warning(
+                    self, "Gagal Menyimpan Histori",
+                    f"Hasil profit tampil, namun gagal disimpan ke profit_history:\n{e_save}",
+                )
+
         except Exception as e:
             QMessageBox.critical(self, "Fatal Error", f"Terjadi kesalahan SQL:\n{str(e)}")
     
+    def save_profit_history(self, hutangs, cuttings, target_kode,
+                            total_revenue, kain_total, cost_produksi_total,
+                            net_profit, dist_home, dist_sup):
+        """Upsert hasil kalkulasi batch ke tabel profit_history.
+
+        Kunci dedup = debt_entry_id (id MODAL hutang terkecil pada batch), supaya
+        klik 'TARIK DATA & ANALISIS' berulang atau toggle status TIDAK
+        menggandakan baris. Batch tanpa hutang MODAL tetap disimpan sebagai baris
+        baru dengan debt_entry_id = None.
+        """
+        today = datetime.now().strftime("%Y-%m-%d")
+
+        # id MODAL hutang terkecil -> deterministik sebagai kunci batch.
+        debt_entry_id = min((h.id for h in hutangs), default=None)
+
+        # Periode = rentang tanggal cutting batch ini (fallback ke hari ini).
+        cut_dates = [c.tanggal for c in cuttings if getattr(c, "tanggal", None)]
+        periode_mulai = min(cut_dates) if cut_dates else today
+        periode_akhir = max(cut_dates) if cut_dates else today
+
+        catatan = f"Batch {target_kode} | Dist Home {dist_home} pcs / Sup {dist_sup} pcs"
+
+        record = None
+        if debt_entry_id is not None:
+            record = (
+                self.db.query(ProfitHistory)
+                .filter(ProfitHistory.debt_entry_id == debt_entry_id)
+                .first()
+            )
+
+        if record is None:
+            record = ProfitHistory(debt_entry_id=debt_entry_id)
+            self.db.add(record)
+
+        record.tanggal_hitung = today
+        record.total_pendapatan = float(total_revenue)
+        record.total_modal_kain = float(kain_total)
+        record.total_modal_jahit = float(cost_produksi_total)
+        record.total_profit = float(net_profit)
+        record.periode_mulai = periode_mulai
+        record.periode_akhir = periode_akhir
+        record.catatan = catatan
+
+        self.db.commit()
+
+        # Beritahu view lain (mis. Dashboard) agar ikut menyegarkan datanya.
+        if self.notifier:
+            self.notifier.database_changed.emit()
+
     def toggle_status_kain(self):
         """Fungsi untuk mengubah status kain (OPEN <-> SELESAI)"""
         target_kode = self.cb_kode_prod.currentText()

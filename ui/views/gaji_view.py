@@ -64,6 +64,7 @@ class GajiView(QWidget):
         self.setup_ui()
         self.load_dropdowns()
         self.load_karyawan_data()
+        self.setup_tab_edit_karyawan()
 
         if self.notifier:
             self.notifier.database_changed.connect(self.refresh_all_gaji_data)
@@ -370,13 +371,13 @@ class GajiView(QWidget):
         top_frame.setObjectName("GridPanel")
         top_lay = QHBoxLayout(top_frame)
 
-        btn_import = CyberButton("📥 IMPORT EXCEL ABSENSI")
+        btn_import = CyberButton("IMPORT EXCEL ABSENSI")
         btn_import.setStyleSheet(f"background-color: {Theme.NEON_YELLOW}; color: #000; font-weight: bold;")
         btn_import.clicked.connect(self.import_absensi_excel)
         
-        btn_export_pasukan = CyberButton("EXPORT FORMAT")
-        btn_export_pasukan.setStyleSheet(f"background-color: {Theme.NEON_CYAN}; color: #000; font-weight: bold;")
-        btn_export_pasukan.clicked.connect(self.export_excel_pasukan)
+        self.btn_edit_karyawan = CyberButton("EDIT DATA ABSENSI & GAJI")
+        self.btn_edit_karyawan.setEnabled(False) # Default mati sebelum ada baris yang dipilih
+        self.btn_edit_karyawan.clicked.connect(self.buka_editor_karyawan)
         
         self.lbl_file_absen = QLabel("Input manual di tabel, atau Import Excel")
         self.lbl_file_absen.setStyleSheet(f"color: {Theme.TEXT_MUTED}; font-style: italic;")
@@ -395,7 +396,7 @@ class GajiView(QWidget):
         self.tarif_lembur.valueChanged.connect(self.recalc_pasukan)
 
         top_lay.addWidget(btn_import)
-        top_lay.addWidget(btn_export_pasukan)
+        top_lay.addWidget(self.btn_edit_karyawan)
         top_lay.addWidget(self.lbl_file_absen)
         top_lay.addStretch()
         top_lay.addWidget(QLabel("Tgl Payroll:")); top_lay.addWidget(self.pasukan_date)
@@ -405,7 +406,7 @@ class GajiView(QWidget):
 
         # -- Smart Grid Table --
         self.table_pasukan = CyberTable()
-        self.table_pasukan.cellChanged.connect(self.on_pasukan_cell_edited)
+        # self.table_pasukan.cellChanged.connect(self.on_pasukan_cell_edited)
         self.table_pasukan.setColumnCount(11)
         self.table_pasukan.setHorizontalHeaderLabels([
             "ID", "Nama Karyawan", "Hadir", 
@@ -413,9 +414,10 @@ class GajiView(QWidget):
             "Menit Lembur", "Tarif Lembur",
             "Gaji Kotor", "Bon Lama", "Potong Kasbon", "Gaji Bersih"
         ])
-        self.table_pasukan.setEditTriggers(QAbstractItemView.EditTrigger.DoubleClicked | QAbstractItemView.EditTrigger.AnyKeyPressed)
-        # Hubungkan kembali ke fungsi cell edited yang sudah kita amankan
-        self.table_pasukan.cellChanged.connect(self.on_pasukan_cell_edited)
+        self.table_pasukan.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.table_pasukan.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.table_pasukan.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self.table_pasukan.itemSelectionChanged.connect(self.on_karyawan_row_selected)
         
         self.table_pasukan.hideColumn(0) # Sembunyikan kolom ID database
         self.table_pasukan.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
@@ -442,6 +444,60 @@ class GajiView(QWidget):
         bot_lay.addWidget(btn_reset_pasukan)
         bot_lay.addWidget(btn_save_pasukan)
         lay.addLayout(bot_lay)
+    
+    def setup_tab_edit_karyawan(self):
+        """Membuat Tab Form Editor dengan Sub-Tabel Absensi Harian"""
+        self.tab_edit_karyawan = QWidget()
+        lay = QVBoxLayout(self.tab_edit_karyawan)
+        
+        self.lbl_edit_karyawan_title = QLabel("EDIT DATA PASUKAN KARYAWAN: -")
+        self.lbl_edit_karyawan_title.setStyleSheet(f"color: {Theme.NEON_CYAN}; font-size: 14pt; font-weight: bold;")
+        lay.addWidget(self.lbl_edit_karyawan_title)
+
+        # ========================================================
+        # 1. SUB-TABEL RINCIAN HARIAN (In-Memory Data)
+        # ========================================================
+        self.table_edit_harian = CyberTable() # atau QTableWidget()
+        self.table_edit_harian.setColumnCount(5)
+        self.table_edit_harian.setHorizontalHeaderLabels(["Tanggal", "Jam Masuk", "Jam Keluar", "Menit Normal", "Menit Lembur"])
+        self.table_edit_harian.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self.table_edit_harian.setAlternatingRowColors(True)
+        lay.addWidget(QLabel("Rincian Absensi Harian (Format Jam -> HH:MM):"))
+        lay.addWidget(self.table_edit_harian)
+        
+        # ========================================================
+        # 2. PANEL TARIF DAN POTONGAN
+        # ========================================================
+        frame_form = QFrame()
+        grid = QGridLayout(frame_form)
+        
+        self.spin_edit_tarif_normal = QDoubleSpinBox()
+        self.spin_edit_tarif_normal.setRange(0, 99999); self.spin_edit_tarif_normal.setPrefix("Rp "); self.spin_edit_tarif_normal.setSuffix(" /Mnt")
+        
+        self.spin_edit_tarif_lembur = QDoubleSpinBox()
+        self.spin_edit_tarif_lembur.setRange(0, 99999); self.spin_edit_tarif_lembur.setPrefix("Rp "); self.spin_edit_tarif_lembur.setSuffix(" /Mnt")
+        
+        self.spin_edit_potong_kasbon = QDoubleSpinBox()
+        self.spin_edit_potong_kasbon.setRange(0, 99999999); self.spin_edit_potong_kasbon.setPrefix("Rp ")
+        
+        grid.addWidget(QLabel("Tarif Normal per Menit:"), 0, 0); grid.addWidget(self.spin_edit_tarif_normal, 0, 1)
+        grid.addWidget(QLabel("Tarif Lembur per Menit:"), 1, 0); grid.addWidget(self.spin_edit_tarif_lembur, 1, 1)
+        grid.addWidget(QLabel("Potongan Kasbon:"), 2, 0); grid.addWidget(self.spin_edit_potong_kasbon, 2, 1)
+        lay.addWidget(frame_form)
+        
+        # Tombol Aksi
+        lay_btn = QHBoxLayout()
+        self.btn_save_edit_karyawan = CyberButton("💾 HITUNG ULANG & TERAPKAN")
+        self.btn_save_edit_karyawan.clicked.connect(self.submit_edit_karyawan)
+        self.btn_cancel_edit_karyawan = CyberButton("❌ BATAL", is_danger=True)
+        self.btn_cancel_edit_karyawan.clicked.connect(self.tutup_editor_karyawan)
+        
+        lay_btn.addWidget(self.btn_save_edit_karyawan)
+        lay_btn.addWidget(self.btn_cancel_edit_karyawan)
+        lay.addLayout(lay_btn)
+        
+        self.current_edit_row_index = None
+        self.current_edit_cache_name = None # Tracker nama di dictionary cache
     
     # ==========================================
     # 4. TAB MANAJEMEN BON (Telah Di-Upgrade)
@@ -534,6 +590,7 @@ class GajiView(QWidget):
         self.bon_tabs.addTab(self.sub_tab_dash_bon, "DASHBOARD KASBON")
         self.bon_tabs.addTab(self.sub_tab_manual_bon, "UPDATE BON MANUAL")
         main_lay.addWidget(self.bon_tabs)
+    
 
     # ==========================================
     # LOGIC UMUM & PENJAHIT
@@ -1578,92 +1635,164 @@ class GajiView(QWidget):
             QMessageBox.information(self, "Sukses", "Draft garapan beserta data Kain Mentah berhasil diamankan ke Excel!")
         except Exception as e:
             QMessageBox.critical(self, "Error Export", f"Gagal mengexport draft: {e}")
-
-    def export_excel_pasukan(self):
-        """Mengekspor format file Excel absensi karyawan yang otomatis berisi daftar semua nama karyawan terdaftar"""
-        file_path, _ = QFileDialog.getSaveFileName(self, "Export Format Excel Karyawan", "Format_Absensi_Karyawan.xlsx", "Excel Files (*.xlsx)")
-        if not file_path: return
-        try:
-            karyawans = self.db.query(Person).filter(Person.person_type == 'KARYAWAN').order_by(Person.nama).all()
-            data = []
-            for k in karyawans:
-                data.append({
-                    "Nama Karyawan": k.nama,
-                    "Hadir": 0,
-                    "Menit Normal": 0,
-                    "Menit Lembur": 0
-                })
-            
-            if not data:
-                data = [{"Nama Karyawan": "Nama Karyawan Contoh", "Hadir": 0, "Menit Normal": 0, "Menit Lembur": 0}]
-                
-            df = pd.DataFrame(data)
-            df.to_excel(file_path, index=False)
-            QMessageBox.information(self, "Sukses", "Format Excel Absensi Karyawan berhasil diexport!")
-        except Exception as e:
-            QMessageBox.critical(self, "Error Export", f"Gagal mengexport file template absensi karyawan: {e}")
     
-    def on_pasukan_cell_edited(self, row, column):
-        """UX Reaktif: Menghitung ulang otomatis jika Menit, TARIF, atau Potongan di-edit kasir"""
-        if column in [3, 4, 5, 6, 9]:
-            self.table_pasukan.blockSignals(True)
-            try:
-                it_nrml = self.table_pasukan.item(row, 3)
-                it_trf_nrml = self.table_pasukan.item(row, 4)
-                it_lmbr = self.table_pasukan.item(row, 5)
-                it_trf_lmbr = self.table_pasukan.item(row, 6)
-                it_bon_lama = self.table_pasukan.item(row, 8)
-                it_potong = self.table_pasukan.item(row, 9)
-
-                # Parsing angka murni desimal dari sel tabel secara aman
-                val_nrml = float(it_nrml.text().strip()) if it_nrml and it_nrml.text().strip() else 0.0
-                trf_nrml = float(it_trf_nrml.text().replace('Rp ', '').replace(',', '').strip()) if it_trf_nrml and it_trf_nrml.text().strip() else self.tarif_normal.value()
+    def on_karyawan_row_selected(self):
+        """Mengaktifkan tombol edit jika baris karyawan dipilih"""
+        self.btn_edit_karyawan.setEnabled(len(self.table_pasukan.selectedItems()) > 0)
+    
+    def buka_editor_karyawan(self):
+        selected_items = self.table_pasukan.selectedItems()
+        if not selected_items: return
+        
+        row = selected_items[0].row()
+        self.current_edit_row_index = row 
+        
+        # 1. Ambil Nama Karyawan dari Tabel Utama
+        nama_tabel = self.table_pasukan.item(row, 1).text().strip().lower()
+        
+        # 2. Cari key yang cocok di dictionary in-memory (cache harian)
+        matched_name = None
+        if hasattr(self, 'cache_absensi_harian'):
+            for cache_name in self.cache_absensi_harian.keys():
+                if nama_tabel in cache_name or cache_name in nama_tabel:
+                    matched_name = cache_name
+                    break
+                    
+        self.current_edit_cache_name = matched_name
+        self.lbl_edit_karyawan_title.setText(f"EDIT DATA: {nama_tabel.upper()}")
+        
+        # 3. Masukkan Data ke Sub-Tabel Harian
+        self.table_edit_harian.setRowCount(0)
+        if matched_name:
+            harian_list = self.cache_absensi_harian[matched_name]
+            self.table_edit_harian.setRowCount(len(harian_list))
+            
+            for i, data in enumerate(harian_list):
+                # Kolom Tanggal (Read-Only)
+                it_tgl = QTableWidgetItem(str(data['tanggal']))
+                it_tgl.setFlags(it_tgl.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                self.table_edit_harian.setItem(i, 0, it_tgl)
                 
-                val_lmbr = float(it_lmbr.text().strip()) if it_lmbr and it_lmbr.text().strip() else 0.0
-                trf_lmbr = float(it_trf_lmbr.text().replace('Rp ', '').replace(',', '').strip()) if it_trf_lmbr and it_trf_lmbr.text().strip() else self.tarif_lembur.value()
+                # Kolom Jam Masuk & Keluar (BISA DIEDIT KASIR!)
+                self.table_edit_harian.setItem(i, 1, QTableWidgetItem(str(data['masuk'])))
+                self.table_edit_harian.setItem(i, 2, QTableWidgetItem(str(data['keluar'])))
                 
-                txt_bon = it_bon_lama.text().replace('Rp ', '').replace(',', '').strip() if it_bon_lama else "0"
-                bon_lama = float(txt_bon) if txt_bon else 0.0
-
-                # KALKULASI DINAMIS BERDASARKAN TARIF YANG SEDANG DI-EDIT
-                gaji_kotor = (val_nrml * trf_nrml) + (val_lmbr * trf_lmbr)
+                # Kolom Menit (Read-Only karena ini hasil rumus otomatis)
+                it_norm = QTableWidgetItem(str(data['menit_normal']))
+                it_norm.setFlags(it_norm.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                self.table_edit_harian.setItem(i, 3, it_norm)
                 
-                if column == 9: # Jika yang diedit kolom potongan, ikuti kemauan kasir
-                    txt_potong = it_potong.text().replace(',', '').strip() if it_potong else "0"
-                    potong_bon = float(txt_potong) if txt_potong else 0.0
-                else: # Jika yang diedit menit/tarif, jalankan rumus autopilot kasbon
-                    potong_bon = bon_lama if gaji_kotor >= bon_lama else gaji_kotor
+                it_lemb = QTableWidgetItem(str(data['menit_lembur']))
+                it_lemb.setFlags(it_lemb.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                self.table_edit_harian.setItem(i, 4, it_lemb)
+
+        # 4. Isi Form Tarif dan Potongan dari Tabel Utama
+        def safe_float(col_idx):
+            item = self.table_pasukan.item(row, col_idx)
+            if not item or not item.text(): return 0.0
+            return float(item.text().replace('Rp', '').replace('/Mnt', '').replace(',', '').strip() or 0)
+            
+        self.spin_edit_tarif_normal.setValue(safe_float(4))
+        self.spin_edit_tarif_lembur.setValue(safe_float(6))
+        self.spin_edit_potong_kasbon.setValue(safe_float(9))
+        
+        # Buka Tab
+        if self.tabs.indexOf(self.tab_edit_karyawan) == -1:
+            self.tabs.addTab(self.tab_edit_karyawan, "🛠️ EDITOR ABSENSI")
+        self.tabs.setCurrentWidget(self.tab_edit_karyawan)
+
+    def tutup_editor_karyawan(self):
+        idx = self.tabs.indexOf(self.tab_edit_karyawan)
+        if idx != -1: self.tabs.removeTab(idx)
+        self.tabs.setCurrentIndex(2) # Kembali ke index tab pasukan karyawan
+        self.table_pasukan.clearSelection()
+        self.current_edit_row_index = None
+    
+    def submit_edit_karyawan(self):
+        row = self.current_edit_row_index
+        cache_name = self.current_edit_cache_name
+        if row is None or row < 0: return
+
+        total_hadir = 0
+        total_menit_normal = 0
+        total_menit_lembur = 0
+
+        # =================================================================
+        # 1. BACA EDITAN JAM, HITUNG MENIT, UPDATE KE CACHE LATAR BELAKANG
+        # =================================================================
+        if cache_name and cache_name in self.cache_absensi_harian:
+            for i in range(self.table_edit_harian.rowCount()):
+                masuk_str = self.table_edit_harian.item(i, 1).text().strip()
+                keluar_str = self.table_edit_harian.item(i, 2).text().strip()
                 
-                if potong_bon > bon_lama: potong_bon = bon_lama
-                if potong_bon > gaji_kotor: potong_bon = gaji_kotor
-
-                gaji_bersih = gaji_kotor - potong_bon
-
-                # --- PERBAIKAN BUG NoneType ---
-                # Pastikan SELURUH widget item (11 kolom) di baris ini tidak ada yang None
-                for c in range(11):
-                    if not self.table_pasukan.item(row, c): 
-                        self.table_pasukan.setItem(row, c, QTableWidgetItem())
-
-                # Tulis kembali hasil hitungan barunya ke layar secara rapi
-                self.table_pasukan.item(row, 7).setText(f"Rp {gaji_kotor:,.0f}")
-                self.table_pasukan.item(row, 9).setText(f"{potong_bon:g}")
-                self.table_pasukan.item(row, 10).setText(f"Rp {gaji_bersih:,.0f}")
+                menit_norm = 0
+                menit_lemb = 0
                 
-                # Update Gaya Warna secara dinamis (Aman karena semua sel sudah diinisialisasi di atas)
-                if gaji_bersih == 0 and gaji_kotor > 0:
-                    for col_idx in range(11):
-                        self.table_pasukan.item(row, col_idx).setBackground(QColor("#2d1f1f"))
-                        self.table_pasukan.item(row, col_idx).setForeground(QColor(Theme.TEXT_MUTED))
-                else:
-                    for col_idx in range(11):
-                        self.table_pasukan.item(row, col_idx).setData(Qt.ItemDataRole.BackgroundRole, None)
-                        self.table_pasukan.item(row, col_idx).setData(Qt.ItemDataRole.ForegroundRole, None)
+                # Rumus Hitung Selisih Jam (HH:MM)
+                if masuk_str and keluar_str and keluar_str.lower() != "lupa":
+                    try:
+                        m_h, m_m = map(int, masuk_str.split(':'))
+                        k_h, k_m = map(int, keluar_str.split(':'))
+                        
+                        min_t = (m_h * 60) + m_m
+                        max_t = (k_h * 60) + k_m
+                        
+                        diff = max_t - min_t
+                        if diff < 0: diff += 1440 # Jika kerja lintas malam
+                        
+                        # Aturan standar: max 8 jam (480 menit) normal, sisanya lembur
+                        menit_norm = min(diff, 480)
+                        menit_lemb = max(0, diff - 480)
+                    except Exception:
+                        pass # Abaikan jika salah ketik format jam
+                
+                # Simpan permanen kembali ke variabel Dictionary Latar Belakang (Cache)
+                self.cache_absensi_harian[cache_name][i]['masuk'] = masuk_str
+                self.cache_absensi_harian[cache_name][i]['keluar'] = keluar_str
+                self.cache_absensi_harian[cache_name][i]['menit_normal'] = menit_norm
+                self.cache_absensi_harian[cache_name][i]['menit_lembur'] = menit_lemb
+                
+                # Hitung akumulasi untuk tabel utama
+                if menit_norm > 0 or menit_lemb > 0 or (masuk_str and keluar_str.lower() != 'lupa'):
+                    total_hadir += 1
+                    
+                total_menit_normal += menit_norm
+                total_menit_lembur += menit_lemb
 
-            except ValueError:
-                pass
-            self.table_pasukan.blockSignals(False)
+        # =================================================================
+        # 2. UPDATE TABEL UTAMA (PASUKAN) DAN KALKULASI UANGNYA
+        # =================================================================
+        tarif_normal = self.spin_edit_tarif_normal.value()
+        tarif_lembur = self.spin_edit_tarif_lembur.value()
+        potong_kasbon = self.spin_edit_potong_kasbon.value()
+        
+        gaji_kotor = (total_menit_normal * tarif_normal) + (total_menit_lembur * tarif_lembur)
+        gaji_bersih = gaji_kotor - potong_kasbon
+        if gaji_bersih < 0: gaji_bersih = 0.0
+
+        # Update Teks Sel di Layar Utama
+        self.table_pasukan.item(row, 2).setText(str(total_hadir))
+        self.table_pasukan.item(row, 3).setText(str(total_menit_normal))
+        self.table_pasukan.item(row, 4).setText(f"Rp {tarif_normal:,.0f}")
+        self.table_pasukan.item(row, 5).setText(str(total_menit_lembur))
+        self.table_pasukan.item(row, 6).setText(f"Rp {tarif_lembur:,.0f}")
+        self.table_pasukan.item(row, 7).setText(f"Rp {gaji_kotor:,.0f}")
+        self.table_pasukan.item(row, 9).setText(f"Rp {potong_kasbon:,.0f}")
+        self.table_pasukan.item(row, 10).setText(f"Rp {gaji_bersih:,.0f}")
+
+        # Highlight Baris Manual (Hijau Cyberpunk)
+        for col_idx in range(11):
+            if self.table_pasukan.item(row, col_idx):
+                self.table_pasukan.item(row, col_idx).setBackground(QColor("#2d4a22"))
+                self.table_pasukan.item(row, col_idx).setForeground(QColor(Theme.NEON_YELLOW))
+
+        # Panggil fungsi refresh kalkulasi total dari bawaan Anda
+        if hasattr(self, 'recalc_pasukan'):
             self.recalc_pasukan()
+
+        QMessageBox.information(self, "Sukses", "Data kehadiran harian berhasil dikalkulasi ulang dan disimpan di memori!")
+        self.tutup_editor_karyawan()
+    
     
     def closeEvent(self, event):
         self.db.close()

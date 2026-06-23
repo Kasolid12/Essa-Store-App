@@ -4,6 +4,9 @@ import json
 import pandas as pd
 from datetime import datetime
 
+from alembic.config import Config
+from alembic import command
+
 # Add root directory to path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -137,8 +140,50 @@ def migrate_skus(db):
         print(f"  -> Error migrating SKUs: {e}")
         db.rollback() # Rollback the transaction so it doesn't lock the database
 
-if __name__ == "__main__":
-    print("=== ESSA STORE MIGRATION SCRIPT: STAGE 1 ===")
+def _get_alembic_config():
+    """Build an Alembic Config pointing at this project's alembic.ini, with the
+    migrations folder resolved absolutely so it works regardless of CWD.
+    """
+    alembic_cfg = Config(os.path.join(BASE_DIR, "alembic.ini"))
+    alembic_cfg.set_main_option(
+        "script_location", os.path.join(BASE_DIR, "data", "migrations")
+    )
+    return alembic_cfg
+
+
+def stamp_baseline(revision: str = "c9b50081130a"):
+    """Mark an EXISTING database as already being at `revision`, WITHOUT
+    running that migration's DDL.
+
+    Use this ONCE when the tables were created outside Alembic (e.g. via
+    Base.metadata.create_all) so Alembic has no version recorded and would
+    otherwise try to re-create tables that already exist. This only writes a
+    row into the `alembic_version` table -- it does not touch your data.
+    """
+    print(f"=== ALEMBIC STAMP BASELINE -> {revision} ===")
+    command.stamp(_get_alembic_config(), revision)
+    print("=== STAMP COMPLETE (Alembic now knows the baseline is applied) ===")
+
+
+def run_alembic_upgrade():
+    """Apply all pending Alembic schema migrations up to the latest (head).
+
+    This is what actually creates/updates tables such as `profit_history`.
+    Safe to run repeatedly: already-applied revisions are skipped.
+    """
+    print("=== ALEMBIC SCHEMA MIGRATION: upgrade -> head ===")
+    command.upgrade(_get_alembic_config(), "head")
+    print("=== SCHEMA MIGRATION COMPLETE (now at head) ===")
+
+
+def run_data_seed():
+    """Legacy ONE-TIME data import from JSON/Excel into the database.
+
+    WARNING: re-running this creates DUPLICATE persons/balances because
+    migrate_persons_and_balances() has no de-duplication guard. Only run
+    this on a fresh / empty database.
+    """
+    print("=== ESSA STORE DATA SEED: STAGE 1 ===")
     db = SessionLocal()
     try:
         migrate_settings(db)
@@ -147,3 +192,19 @@ if __name__ == "__main__":
         print("\n=== STAGE 1 COMPLETE ===")
     finally:
         db.close()
+
+
+if __name__ == "__main__":
+    # Default: run schema migrations only (safe to run repeatedly).
+    #
+    # `--stamp-baseline` : run ONCE on a pre-existing DB whose tables were
+    #                      created outside Alembic, so Alembic records the
+    #                      initial schema as already applied.
+    # `--seed`           : run ONLY on a fresh database to import legacy
+    #                      JSON/Excel data (creates duplicates if re-run).
+    if "--seed" in sys.argv:
+        run_data_seed()
+    elif "--stamp-baseline" in sys.argv:
+        stamp_baseline()
+    else:
+        run_alembic_upgrade()

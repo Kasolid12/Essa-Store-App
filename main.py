@@ -18,7 +18,7 @@ from ui.views.gaji_view import GajiView
 from ui.views.stock_view import StockView
 from ui.views.invoice_view import InvoiceView
 from ui.views.profit_view import ProfitSimulationView
-from ui.views.bi_agent_view import BIAgentView
+from ui.views.dashboard_view import DashboardView
 from utils.backup_engine import backup_database
 from data.database import engine
 from data.models.base import Base
@@ -87,7 +87,6 @@ class ESSAMainWindow(QMainWindow):
             ("stok", "STOCK MANAGER"),
             ("invoice", "INVOICE & PIUTANG"),
             ("profit", "PROFIT SIMULATION"),
-            ("agent", "BI AGENT"),
             ("master", "DATA MANAGER")
         ]
 
@@ -117,13 +116,7 @@ class ESSAMainWindow(QMainWindow):
         self.pages = {} # Hanya simpan dictionary kosong di awal
 
         # Render Dashboard saja di awal
-        page_dash = QWidget()
-        lay_dash = QVBoxLayout(page_dash)
-        title_dash = QLabel("SYSTEM DASHBOARD")
-        title_dash.setStyleSheet(f"font-size: 28pt; font-weight: bold; color: {Theme.TEXT_MAIN};")
-        lay_dash.addWidget(title_dash)
-        lay_dash.addStretch()
-        
+        page_dash = DashboardView(notifier=global_notifier)
         self.pages["dashboard"] = page_dash
         self.stacked_widget.addWidget(page_dash)
 
@@ -141,7 +134,6 @@ class ESSAMainWindow(QMainWindow):
             elif page_key == "stok": self.pages[page_key] = StockView(notifier=global_notifier)
             elif page_key == "invoice": self.pages[page_key] = InvoiceView(notifier=global_notifier)
             elif page_key == "profit": self.pages[page_key] = ProfitSimulationView(notifier=global_notifier)
-            elif page_key == "agent": self.pages[page_key] = BIAgentView(notifier=global_notifier)
             
             # Tambahkan ke tumpukan widget
             self.stacked_widget.addWidget(self.pages[page_key])

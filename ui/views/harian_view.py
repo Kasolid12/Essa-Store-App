@@ -189,7 +189,7 @@ class CatatanHarianView(QWidget):
         self.btn_submit_dist.clicked.connect(self.submit_distribusi)
         
         self.btn_reset_dist = CyberButton("BATAL EDIT")
-        self.btn_reset_dist.clicked.connect(self.reset_cutting_form)
+        self.btn_reset_dist.clicked.connect(self.reset_distribusi_form)
         self.btn_reset_dist.hide()
 
         # Penataan layout grid baru
@@ -542,13 +542,23 @@ class CatatanHarianView(QWidget):
             self.dist_sumber_cutting.clear()
             self.dist_sumber_cutting.addItem("-- Pilih List Cutting --", None)
             
-            cuttings = self.db.query(HasilCutting).filter(HasilCutting.kode_produksi == record.kode_produksi).all()
+            # Get the actual cutting record via FK first to get current kode_produksi
+            actual_cutting = self.db.query(HasilCutting).get(record.hasil_cutting_id)
+            if actual_cutting:
+                # Use the current kode_produksi from the actual cutting record
+                current_kode_produksi = actual_cutting.kode_produksi
+            else:
+                # Fallback to the denormalized field if FK is broken (shouldn't happen)
+                current_kode_produksi = record.kode_produksi
+
+            # Now query for cuttings with the current kode_produksi
+            cuttings = self.db.query(HasilCutting).filter(HasilCutting.kode_produksi == current_kode_produksi).all()
             for c in cuttings:
                 distribusis = self.db.query(DistribusiCutting).filter(DistribusiCutting.hasil_cutting_id == c.id).all()
                 # Abaikan distribusi yang sedang di-edit ini saat menghitung barang terpakai
                 terpakai = sum(d.qty for d in distribusis if d.id != self.selected_dist_id)
                 sisa_tersedia_untuk_edit = c.qty - terpakai
-                
+
                 if sisa_tersedia_untuk_edit > 0:
                     sku_nama = c.sku.nama_produk if c.sku else "Unknown SKU"
                     self.dist_sumber_cutting.addItem(f"{sku_nama} (Max {sisa_tersedia_untuk_edit} Pcs)", c.id)
@@ -573,6 +583,7 @@ class CatatanHarianView(QWidget):
         self.qty_dist.setValue(0)
         self.person_dist.setCurrentIndex(0)
         self.dist_kode_produksi.setCurrentIndex(0) # Ini otomatis akan mereset list sumber cutting
+        self.dist_sumber_cutting.setCurrentIndex(0) # Reset the sumber cutting dropdown
         self.btn_submit_dist.setText("SIMPAN DISTRIBUSI")
         self.btn_reset_dist.hide()
         self.table_distribusi.clearSelection()

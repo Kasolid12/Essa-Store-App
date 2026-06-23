@@ -3,19 +3,18 @@ import os
 import pandas as pd
 from datetime import datetime
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QFrame, 
-    QLineEdit, QTableWidgetItem, QHeaderView, QTabWidget,
-    QComboBox, QSpinBox, QDoubleSpinBox, QMessageBox, QFileDialog, QCompleter
+    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QFrame,
+    QTabWidget, QComboBox, QSpinBox, QDoubleSpinBox, QMessageBox, QFileDialog, QCompleter,
+    QTableWidgetItem, QHeaderView
 )
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QColor, QBrush, QFont
-from sqlalchemy import func
+from PySide6.QtGui import QColor, QBrush
 
 from ui.components.tables import CyberTable
 from ui.components.buttons import CyberButton
 from ui.theme import Theme
 from data.database import SessionLocal
-from data.models import SkuMaster, HasilCutting, DistribusiCutting, PengeluaranOffline
+from data.models import SkuMaster
 
 class StockView(QWidget):
     def __init__(self, notifier=None):
@@ -24,7 +23,6 @@ class StockView(QWidget):
         self.notifier = notifier
         self.staging_data = [] # Holds data for Excel Export
         self.setup_ui()
-        self.load_stock_data()
         self.load_sku_dropdown()
         if self.notifier:
             self.notifier.database_changed.connect(self.refresh_harian_tables)
@@ -32,8 +30,6 @@ class StockView(QWidget):
     def refresh_harian_tables(self):
         """Menyegarkan seluruh grid tabel catatan harian jika ada perubahan data di menu lain"""
         self.db.expire_all()
-        # Masukkan semua fungsi load data harian Anda di bawah ini
-        if hasattr(self, 'load_stock_data'): self.load_stock_data()
         if hasattr(self, 'load_sku_dropdown'): self.load_sku_dropdown()
     
     def setup_ui(self):
@@ -62,77 +58,14 @@ class StockView(QWidget):
             QTabWidget::pane {{ border: 1px solid {Theme.BORDER_DIM}; top: -1px; }}
         """)
 
-        self.setup_tab_dashboard()
         self.setup_tab_export()
 
-        self.tabs.addTab(self.tab_dashboard, "LIVE DASHBOARD")
         self.tabs.addTab(self.tab_export, "STAGING & EXPORT (BIGSELLER)")
         
         layout.addWidget(self.tabs)
 
     # ==========================================
-    # TAB 1: LIVE DASHBOARD
-    # ==========================================
-    def setup_tab_dashboard(self):
-        self.tab_dashboard = QWidget()
-        layout = QVBoxLayout(self.tab_dashboard)
-        
-        # Search Bar
-        top_lay = QHBoxLayout()
-        self.search_bar = QLineEdit()
-        self.search_bar.setPlaceholderText("Cari SKU atau Nama Produk...")
-        self.search_bar.setFixedWidth(300)
-        self.search_bar.textChanged.connect(self.filter_table)
-        top_lay.addWidget(self.search_bar)
-        
-        btn_refresh = CyberButton("REFRESH DATA")
-        btn_refresh.clicked.connect(self.load_stock_data)
-        top_lay.addWidget(btn_refresh)
-        top_lay.addStretch()
-        layout.addLayout(top_lay)
-
-        # Summary Widgets
-        summary_layout = QHBoxLayout()
-        self.lbl_tot_sku = self.create_summary_card("TOTAL SKU AKTIF", "0")
-        self.lbl_tot_cut = self.create_summary_card("TOTAL PRODUKSI (CUTTING)", "0 Pcs", Theme.NEON_CYAN)
-        self.lbl_tot_wip = self.create_summary_card("SEDANG DIJAHIT (WIP)", "0 Pcs", Theme.NEON_YELLOW)
-        self.lbl_tot_out = self.create_summary_card("TERJUAL OFFLINE", "0 Pcs", Theme.NEON_PINK)
-        
-        summary_layout.addWidget(self.lbl_tot_sku)
-        summary_layout.addWidget(self.lbl_tot_cut)
-        summary_layout.addWidget(self.lbl_tot_wip)
-        summary_layout.addWidget(self.lbl_tot_out)
-        layout.addLayout(summary_layout)
-
-        # Main Data Table
-        self.table = CyberTable()
-        self.table.setColumnCount(6)
-        self.table.setHorizontalHeaderLabels([
-            "Kode SKU", "Nama Produk", "Total Cutting (In)", 
-            "Di Penjahit (WIP)", "Terjual Offline (Out)", "SISA ESTIMASI"
-        ])
-        self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
-        layout.addWidget(self.table)
-
-    def create_summary_card(self, title, value, color=Theme.TEXT_MAIN):
-        card = QFrame()
-        card.setObjectName("GridPanel")
-        lay = QVBoxLayout(card)
-        
-        lbl_title = QLabel(title)
-        lbl_title.setStyleSheet(f"color: {Theme.TEXT_MUTED}; font-size: 10pt; font-weight: bold;")
-        lbl_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        
-        lbl_val = QLabel(value)
-        lbl_val.setStyleSheet(f"color: {color}; font-size: 20pt; font-weight: bold;")
-        lbl_val.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        
-        lay.addWidget(lbl_title)
-        lay.addWidget(lbl_val)
-        return card
-
-    # ==========================================
-    # TAB 2: BIGSELLER EXPORT STAGING
+    # TAB: BIGSELLER EXPORT STAGING
     # ==========================================
     def setup_tab_export(self):
         self.tab_export = QWidget()
@@ -228,53 +161,6 @@ class StockView(QWidget):
         lay_btn.addWidget(btn_export_out)
         
         lay.addLayout(lay_btn)
-
-    # ==========================================
-    # LOGIC: DASHBOARD
-    # ==========================================
-    def load_stock_data(self):
-        self.table.setRowCount(0)
-        skus = self.db.query(SkuMaster).filter(SkuMaster.is_active == 1).order_by(SkuMaster.kode_sku).all()
-        global_cut, global_wip, global_out = 0, 0, 0
-        
-        self.table.setRowCount(len(skus))
-        for row, sku in enumerate(skus):
-            tot_cut = self.db.query(func.sum(HasilCutting.qty)).filter(HasilCutting.sku_id == sku.id).scalar() or 0
-            tot_wip = self.db.query(func.sum(DistribusiCutting.qty)).filter(DistribusiCutting.sku_id == sku.id).scalar() or 0
-            tot_out = self.db.query(func.sum(PengeluaranOffline.qty)).filter(PengeluaranOffline.sku_id == sku.id).scalar() or 0
-            
-            sisa_estimasi = tot_cut - tot_out
-            global_cut += tot_cut; global_wip += tot_wip; global_out += tot_out
-
-            self.table.setItem(row, 0, QTableWidgetItem(sku.kode_sku))
-            self.table.setItem(row, 1, QTableWidgetItem(sku.nama_produk))
-            self._set_number_item(self.table, row, 2, tot_cut)
-            self._set_number_item(self.table, row, 3, tot_wip, Theme.NEON_YELLOW)
-            self._set_number_item(self.table, row, 4, tot_out, Theme.NEON_PINK)
-            
-            item_sisa = QTableWidgetItem(f"{sisa_estimasi:,}")
-            item_sisa.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-            item_sisa.setForeground(QBrush(QColor(Theme.NEON_CYAN)))
-            font = QFont(); font.setBold(True); item_sisa.setFont(font)
-            self.table.setItem(row, 5, item_sisa)
-
-        self.lbl_tot_sku.findChildren(QLabel)[1].setText(f"{len(skus):,}")
-        self.lbl_tot_cut.findChildren(QLabel)[1].setText(f"{global_cut:,} Pcs")
-        self.lbl_tot_wip.findChildren(QLabel)[1].setText(f"{global_wip:,} Pcs")
-        self.lbl_tot_out.findChildren(QLabel)[1].setText(f"{global_out:,} Pcs")
-
-    def filter_table(self, text):
-        search_term = text.lower()
-        for row in range(self.table.rowCount()):
-            kode = self.table.item(row, 0).text().lower()
-            nama = self.table.item(row, 1).text().lower()
-            self.table.setRowHidden(row, not (search_term in kode or search_term in nama))
-
-    def _set_number_item(self, table, row, col, val, color=None):
-        item = QTableWidgetItem(f"{val:,}")
-        item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-        if color: item.setForeground(QBrush(QColor(color)))
-        table.setItem(row, col, item)
 
     # ==========================================
     # LOGIC: STAGING & EXPORT

@@ -10,5 +10,6 @@ from .bon import BonBalance, BonMovement
 from .salary import SalaryRun, SalaryLineItem, PengsupReconciliation, AttendanceRecord
 from .invoice import Invoice, InvoiceLine, ClientReceivable, ClientReceivablePayment
 from .stock_audit import StockMovement, AuditLog
+from .profit_history import ProfitHistory
 
 # This ensures all models are attached to Base.metadata before Alembic reads it
