@@ -188,7 +188,9 @@ class StockView(QWidget):
         row = self.table_staging.rowCount()
         self.table_staging.insertRow(row)
         self.table_staging.setItem(row, 0, QTableWidgetItem(sku_code))
-        self._set_number_item(self.table_staging, row, 1, qty)
+        item_qty = QTableWidgetItem(f"{qty:,}")
+        item_qty.setTextAlignment(Qt.AlignCenter)
+        self.table_staging.setItem(row, 1, item_qty)
         self.table_staging.setItem(row, 2, QTableWidgetItem(f"Rp {harga:,.0f}" if harga > 0 else "-"))
         
         status = QTableWidgetItem("Siap Export")

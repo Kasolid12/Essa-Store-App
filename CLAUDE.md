@@ -193,10 +193,9 @@ All previously open bugs in `catatan_harian ↔ hutang ↔ profit` were resolved
 
 ## 8. Open Issues & Active Work
 
-### 8.1 Stock staging — `_set_number_item` missing on `StockView`
-**Status**: Open
-**Reported**: 2026-06-23
-**File**: `ui/views/stock_view.py`, `add_to_staging()` line ~191
+### 8.1 Stock staging — `_set_number_item` missing on `StockView` ~~> **FIXED** (2026-06-24)
+**Status**: ✅ Fixed
+**File**: `ui/views/stock_view.py`, `add_to_staging()` line 191
 
 **Symptom** (reported by user)
 - Clicking "Tambahkan ke staging" di Stock Manager: kolom SKU di tabel staging selalu sama untuk semua baris; kolom lain (qty, dll.) kosong di tabel.
@@ -208,40 +207,32 @@ All previously open bugs in `catatan_harian ↔ hutang ↔ profit` were resolved
         self._set_number_item(self.table_staging, row, 1, qty)
   ```
 
-**Root cause (hipotesis dari traceback saja — kode belum dibaca sesuai § 10.2)**
-`add_to_staging()` memanggil `self._set_number_item(...)` padahal helper tidak ada di kelas `StockView`. Exception terjadi **di tengah** proses set baris → cell SKU yang lebih awal sempat terbentuk, cell numerik tidak → render berkesan "baris ke-N pake SKU baris pertama, kolom lain kosong".
+**Root cause**
+`add_to_staging()` memanggil `self._set_number_item(...)` padahal helper tidak ada di kelas `StockView` — method ini ikut terhapus bersama tab Live Dashboard di commit `19369bd2`. Exception terjadi **di tengah** proses set baris → cell SKU yang lebih awal sempat terbentuk, cell numerik tidak → render berkesan "baris ke-N pake SKU baris pertama, kolom lain kosong".
 
-**Action plan**
+**Fix applied: Option B — Inline replacement**
 
-1. **Analyze** (≤ 3 file Python per turn, lihat § 10.2):
-   - [ ] Baca `ui/views/stock_view.py` fokus area `add_to_staging` (~line 191) — catat semua callsite `_set_number_item`, signature yang diharapkan, dan helper lain di file yang sama.
-   - [ ] Baca `ui/components/tables.py` — cek apakah sudah ada helper shared `set_number_item` / setara untuk `QTableWidget` yang bisa dipake ulang.
-   - [ ] (Opsional, di turn berikutnya) `git log -p -- ui/views/stock_view.py | grep -n _set_number_item` — untuk tahu kapan helper hilang dan apa signature aslinya.
+1. **Analyze** (✅ selesai 2026-06-24):
+   - [x] Baca `ui/views/stock_view.py` fokus area `add_to_staging` — ditemukan 1 callsite `_set_number_item` di line 191. Tidak ada callsite lain di file tersebut.
+   - [x] Baca `ui/components/tables.py` — `CyberTable` adalah styling wrapper murni, tidak ada helper `set_number_item`.
+   - [x] `git log` — method asli:
+         ```python
+         def _set_number_item(self, table, row, col, val, color=None):
+             item = QTableWidgetItem(f"{val:,}")
+             item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+             if color: item.setForeground(QBrush(QColor(color)))
+             table.setItem(row, col, item)
+         ```
 
-2. **Map solution** — pilih salah satu setelah Phase 1:
-   - **A. Restore helper** sebagai method di `StockView` (atau di `ui/components/tables.py` jika multi-site). Paling dekat dengan intent asli.
-   - **B. Inline replacement** di line 191: `QTableWidgetItem(str(qty))` lalu `setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)`. Cepat, tanpa helper baru.
-   - **C. Pakai helper shared** dari `ui/components/tables.py` kalau ternyata sudah ada dan tinggal di-import.
+2. **Mapped solution**: Pilih Opsi **B — Inline** karena hanya 1 callsite dan method asli bagian dari Live Dashboard (sudah dihapus).
+3. **Fix** (✅ selesai 2026-06-24): line 191 diganti dengan inline `QTableWidgetItem(f"{qty:,}")` dengan `setTextAlignment(Qt.AlignCenter)` — mempertahankan thousand separator dari implementasi asli tanpa resurrect method mati.
+4. **Verify** ✅ (2026-06-24, confirmed by user):
+   - [x] Buka app, input 2-3 SKU berbeda dengan qty berbeda, pastikan tabel staging menampilkan baris unik tanpa `AttributeError` di terminal.
+   - [x] Export Excel dan periksa hasilnya.
 
-3. **Fix**: implement sesuai pilihan Phase 2. Pastiin:
-   - Setiap baris staging punya SKU + qty yang **unik sesuai input**.
-   - Tidak ada lagi `AttributeError` di terminal.
-   - Format angka (separator / desimal) konsisten.
-
-4. **Verify**:
-   - [ ] Smoke test: input 3 SKU berbeda (mis. SKU-A, SKU-B, SKU-C) dengan qty berbeda — tabel staging harus tampil 3 baris unik.
-   - [ ] Export Excel — buka file, konfirmasi SKU & qty per baris sesuai input.
-   - [ ] Re-run beberapa kali untuk konfirmasi tidak flakey.
-
-**Out of scope (untuk bug ini)**
-- Jangan ubah struktur tabel / kolom — hanya perbaiki fungsi add saja.
-- Jangan refactor `add_to_staging` lebih dari yang diperlukan untuk fix.
-
-**Constraints (re-stated § 10)**
-- No direct DB inspection.
-- No auto-run migration.
-- Jangan sentuh `backups/` atau `exports/`.
-- Konfirmasi user sebelum edit file (sudah diizinkan di pesan ini).
+**Out of scope**
+- Tidak ada perubahan struktur tabel / kolom.
+- Tidak ada refactor di luar line 191.
 
 ---
 
