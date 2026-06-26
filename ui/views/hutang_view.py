@@ -7,7 +7,7 @@ from PySide6.QtWidgets import (
 )
 import os
 from utils.pdf_engine import generate_batch_receipt_pdf
-from PySide6.QtCore import Qt, QDate
+from PySide6.QtCore import Qt, QDate, QTimer
 
 from ui.components.tables import CyberTable
 from ui.components.buttons import CyberButton
@@ -38,6 +38,8 @@ class HutangView(QWidget):
         if hasattr(self, 'load_dropdowns'): self.load_dropdowns()
         if hasattr(self, 'load_barang_terhutang'): self.load_barang_terhutang()
         if hasattr(self, 'load_modal_hutang'): self.load_modal_hutang()
+        if hasattr(self, 'apply_search_filter'):
+            self.apply_search_filter()
     
     def setup_ui(self):
         layout = QVBoxLayout(self)
@@ -48,7 +50,33 @@ class HutangView(QWidget):
         title.setStyleSheet(f"font-size: 24pt; font-weight: bold; color: {Theme.NEON_CYAN};")
         header_layout.addWidget(title)
         header_layout.addStretch()
+
+        # Search bar global — filter sesuai tab yang sedang aktif
+        self.search_input = QLineEdit()
+        self.search_input.setPlaceholderText("🔍 Cari data...")
+        self.search_input.setClearButtonEnabled(True)
+        self.search_input.setStyleSheet(f"""
+            QLineEdit {{
+                background-color: {Theme.BG_VOID};
+                color: {Theme.TEXT_MAIN};
+                border: 1px solid {Theme.BORDER_DIM};
+                border-radius: 6px;
+                padding: 8px 15px;
+                font-size: 12pt;
+                min-width: 250px;
+            }}
+            QLineEdit:focus {{
+                border: 1px solid {Theme.NEON_CYAN};
+            }}
+        """)
+        header_layout.addWidget(self.search_input)
         layout.addLayout(header_layout)
+
+        # Debounce timer untuk search (300ms)
+        self.search_timer = QTimer()
+        self.search_timer.setSingleShot(True)
+        self.search_timer.timeout.connect(self.apply_search_filter)
+        self.search_input.textChanged.connect(self.on_search_text_changed)
 
         self.tabs = QTabWidget()
         self.tabs.setStyleSheet(f"""
@@ -68,7 +96,50 @@ class HutangView(QWidget):
 
         self.tabs.addTab(self.tab_barang, "BARANG TERHUTANG")
         self.tabs.addTab(self.tab_modal, "MODAL HUTANG")
+        self.tabs.currentChanged.connect(self.on_tab_changed)
         layout.addWidget(self.tabs)
+
+    # ==========================================
+    # SEARCH GLOBAL (debounce 300ms)
+    # ==========================================
+    def on_search_text_changed(self):
+        """Mulai timer debounce saat teks search berubah."""
+        self.search_timer.start(300)
+
+    def apply_search_filter(self):
+        """Filter tabel sesuai tab yang aktif berdasarkan teks search."""
+        search_text = self.search_input.text().strip().lower()
+        idx = self.tabs.currentIndex()
+
+        if idx == 0:
+            table = self.table_barang
+        elif idx == 1:
+            table = self.table_modal
+        else:
+            return
+
+        self._filter_table(table, search_text)
+
+    def _filter_table(self, table, search_text):
+        """Tampilkan baris yang cocok dengan search_text (case-insensitive)."""
+        if not search_text:
+            for row in range(table.rowCount()):
+                table.setRowHidden(row, False)
+            return
+
+        for row in range(table.rowCount()):
+            found = False
+            for col in range(table.columnCount()):
+                item = table.item(row, col)
+                if item and item.text():
+                    if search_text in item.text().lower():
+                        found = True
+                        break
+            table.setRowHidden(row, not found)
+
+    def on_tab_changed(self, index):
+        """Re-filter saat pindah tab agar search tetap berlaku."""
+        self.apply_search_filter()
 
     def setup_completer(self, combobox):
         completer = combobox.completer()
@@ -368,6 +439,8 @@ class HutangView(QWidget):
             elif d.status == 'LUNAS': status_item.setForeground(Qt.GlobalColor.green)
             self.table_barang.setItem(r, 7, status_item)
 
+        self.apply_search_filter()
+
     def load_modal_hutang(self):
         self.table_modal.setRowCount(0)
         debts = self.db.query(DebtEntry).filter(DebtEntry.tipe_hutang == 'MODAL').order_by(DebtEntry.status.desc(), DebtEntry.tanggal.desc()).all()
@@ -394,6 +467,8 @@ class HutangView(QWidget):
             if d.status == 'OPEN': status_item.setForeground(Qt.GlobalColor.red)
             elif d.status == 'LUNAS': status_item.setForeground(Qt.GlobalColor.green)
             self.table_modal.setItem(r, 7, status_item)
+
+        self.apply_search_filter()
 
     def on_barang_selected(self):
         self.selected_barang_debt_ids.clear()

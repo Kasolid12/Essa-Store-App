@@ -444,7 +444,9 @@ class ProfitSimulationView(QWidget):
             record = ProfitHistory(debt_entry_id=debt_entry_id)
             self.db.add(record)
 
-        record.tanggal_hitung = today
+        # tanggal_hitung = tanggal kain acuan dari hutang (bukan tanggal proses)
+        kain_dates = [h.tanggal for h in hutangs if getattr(h, "tanggal", None)]
+        record.tanggal_hitung = min(kain_dates) if kain_dates else today
         record.total_pendapatan = float(total_revenue)
         record.total_modal_kain = float(kain_total)
         record.total_modal_jahit = float(cost_produksi_total)

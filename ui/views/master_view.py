@@ -202,6 +202,8 @@ class MasterDataView(QWidget):
             self.db.commit()
             self.clear_sku_form()
             self.load_sku_data()
+            if self.notifier:
+                self.notifier.database_changed.emit()
         except Exception as e:
             self.db.rollback()
             self.db.expire_all()
@@ -214,6 +216,8 @@ class MasterDataView(QWidget):
             self.db.commit()
             self.clear_sku_form()
             self.load_sku_data()
+            if self.notifier:
+                self.notifier.database_changed.emit()
         except Exception:
             self.db.rollback()
             self.db.expire_all()
@@ -269,6 +273,8 @@ class MasterDataView(QWidget):
             self.db.commit()
             self.clear_person_form()
             self.load_person_data()
+            if self.notifier:
+                self.notifier.database_changed.emit()
         except Exception as e:
             self.db.rollback()
             self.db.expire_all()
@@ -291,6 +297,8 @@ class MasterDataView(QWidget):
                 self.db.commit()
                 self.clear_person_form()
                 self.load_person_data()
+                if self.notifier:
+                    self.notifier.database_changed.emit()
                 QMessageBox.information(self, "Sukses", "Data berhasil dihapus.")
             except Exception:
                 self.db.rollback()

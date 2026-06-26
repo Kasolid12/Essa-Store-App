@@ -5,7 +5,7 @@ from PySide6.QtWidgets import (
     QDateEdit, QMessageBox, QFrame, QCompleter, QDoubleSpinBox, 
     QGridLayout, QLineEdit, QAbstractItemView
 )
-from PySide6.QtCore import Qt, QDate
+from PySide6.QtCore import Qt, QDate, QTimer
 
 from ui.components.tables import CyberTable
 from ui.components.buttons import CyberButton
@@ -49,6 +49,9 @@ class CatatanHarianView(QWidget):
         if hasattr(self, 'load_offline'): self.load_offline()
         if hasattr(self, 'load_operasional'): self.load_operasional()
         if hasattr(self, 'load_sumber_dropdowns'): self.load_sumber_dropdowns()
+        # Re-apply search filter setelah refresh data
+        if hasattr(self, 'apply_search_filter'):
+            self.apply_search_filter()
         
     
     def setup_ui(self):
@@ -60,7 +63,33 @@ class CatatanHarianView(QWidget):
         title.setStyleSheet(f"font-size: 24pt; font-weight: bold; color: {Theme.NEON_CYAN};")
         header_layout.addWidget(title)
         header_layout.addStretch()
+
+        # Search bar global — filter sesuai tab yang sedang aktif
+        self.search_input = QLineEdit()
+        self.search_input.setPlaceholderText("🔍 Cari data...")
+        self.search_input.setClearButtonEnabled(True)
+        self.search_input.setStyleSheet(f"""
+            QLineEdit {{
+                background-color: {Theme.BG_VOID};
+                color: {Theme.TEXT_MAIN};
+                border: 1px solid {Theme.BORDER_DIM};
+                border-radius: 6px;
+                padding: 8px 15px;
+                font-size: 12pt;
+                min-width: 250px;
+            }}
+            QLineEdit:focus {{
+                border: 1px solid {Theme.NEON_CYAN};
+            }}
+        """)
+        header_layout.addWidget(self.search_input)
         layout.addLayout(header_layout)
+
+        # Debounce timer untuk search (300ms)
+        self.search_timer = QTimer()
+        self.search_timer.setSingleShot(True)
+        self.search_timer.timeout.connect(self.apply_search_filter)
+        self.search_input.textChanged.connect(self.on_search_text_changed)
 
         self.tabs = QTabWidget()
         self.tabs.setStyleSheet(f"""
@@ -84,7 +113,54 @@ class CatatanHarianView(QWidget):
         self.tabs.addTab(self.tab_distribusi, "DISTRIBUSI JAHIT")
         self.tabs.addTab(self.tab_offline, "PENGELUARAN OFFLINE")
         self.tabs.addTab(self.tab_operasional, "MODAL OPERASIONAL")
+        self.tabs.currentChanged.connect(self.on_tab_changed)
         layout.addWidget(self.tabs)
+
+    # ==========================================
+    # SEARCH GLOBAL (debounce 300ms)
+    # ==========================================
+    def on_search_text_changed(self):
+        """Mulai timer debounce saat teks search berubah."""
+        self.search_timer.start(300)
+
+    def apply_search_filter(self):
+        """Filter tabel sesuai tab yang aktif berdasarkan teks search."""
+        search_text = self.search_input.text().strip().lower()
+        idx = self.tabs.currentIndex()
+
+        if idx == 0:
+            table = self.table_cutting
+        elif idx == 1:
+            table = self.table_distribusi
+        elif idx == 2:
+            table = self.table_offline
+        elif idx == 3:
+            table = self.table_operasional
+        else:
+            return
+
+        self._filter_table(table, search_text)
+
+    def _filter_table(self, table, search_text):
+        """Tampilkan baris yang cocok dengan search_text (case-insensitive)."""
+        if not search_text:
+            for row in range(table.rowCount()):
+                table.setRowHidden(row, False)
+            return
+
+        for row in range(table.rowCount()):
+            found = False
+            for col in range(table.columnCount()):
+                item = table.item(row, col)
+                if item and item.text():
+                    if search_text in item.text().lower():
+                        found = True
+                        break
+            table.setRowHidden(row, not found)
+
+    def on_tab_changed(self, index):
+        """Re-filter saat pindah tab agar search tetap berlaku."""
+        self.apply_search_filter()
 
     def setup_completer(self, combobox):
         completer = combobox.completer()
@@ -125,7 +201,11 @@ class CatatanHarianView(QWidget):
         self.btn_reset_cut = CyberButton("BATAL EDIT")
         self.btn_reset_cut.clicked.connect(self.reset_cutting_form)
         self.btn_reset_cut.hide() # Sembunyikan saat mode normal
-        
+
+        self.btn_delete_cut = CyberButton("HAPUS", is_danger=True)
+        self.btn_delete_cut.clicked.connect(self.delete_cutting)
+        self.btn_delete_cut.hide()
+
         # Penataan ulang grid agar lebih rapi
         form_lay.addWidget(QLabel("Tanggal:"), 0, 0)
         form_lay.addWidget(self.date_cut, 0, 1)
@@ -138,6 +218,7 @@ class CatatanHarianView(QWidget):
         form_lay.addWidget(self.qty_cut, 1, 4)
         form_lay.addWidget(self.btn_submit_cut, 1, 5)
         form_lay.addWidget(self.btn_reset_cut, 1, 6)
+        form_lay.addWidget(self.btn_delete_cut, 1, 7)
 
         lay.addWidget(form_frame)
 
@@ -192,12 +273,16 @@ class CatatanHarianView(QWidget):
         self.btn_reset_dist.clicked.connect(self.reset_distribusi_form)
         self.btn_reset_dist.hide()
 
+        self.btn_delete_dist = CyberButton("HAPUS", is_danger=True)
+        self.btn_delete_dist.clicked.connect(self.delete_distribusi)
+        self.btn_delete_dist.hide()
+
         # Penataan layout grid baru
         form_lay.addWidget(QLabel("Tanggal:"), 0, 0)
         form_lay.addWidget(self.date_dist, 0, 1)
         form_lay.addWidget(QLabel("Penerima:"), 0, 2)
         form_lay.addWidget(self.person_dist, 0, 3, 1, 2)
-        
+
         form_lay.addWidget(QLabel("Filter Kode Batch:"), 1, 0)
         form_lay.addWidget(self.dist_kode_produksi, 1, 1)
         form_lay.addWidget(QLabel("List Batch Cutting:"), 1, 2)
@@ -207,6 +292,7 @@ class CatatanHarianView(QWidget):
         form_lay.addWidget(self.qty_dist, 2, 3)
         form_lay.addWidget(self.btn_submit_dist, 2, 4)
         form_lay.addWidget(self.btn_reset_dist, 2, 5)
+        form_lay.addWidget(self.btn_delete_dist, 2, 6)
 
         lay.addWidget(form_frame)
 
@@ -267,13 +353,17 @@ class CatatanHarianView(QWidget):
         self.btn_reset_off.clicked.connect(self.reset_offline_form)
         self.btn_reset_off.hide()
 
+        self.btn_delete_off = CyberButton("HAPUS", is_danger=True)
+        self.btn_delete_off.clicked.connect(self.delete_offline)
+        self.btn_delete_off.hide()
+
         form_lay.addWidget(QLabel("Tanggal:"), 0, 0)
         form_lay.addWidget(self.date_off, 0, 1)
         form_lay.addWidget(QLabel("Pembeli:"), 0, 2)
         form_lay.addWidget(self.person_off, 0, 3)
         form_lay.addWidget(QLabel("SKU:"), 0, 4)
         form_lay.addWidget(self.sku_off, 0, 5)
-        
+
         form_lay.addWidget(QLabel("Qty:"), 1, 0)
         form_lay.addWidget(self.qty_off, 1, 1)
         form_lay.addWidget(QLabel("Harga Satuan:"), 1, 2)
@@ -281,6 +371,7 @@ class CatatanHarianView(QWidget):
         form_lay.addWidget(QLabel("Total:"), 1, 4)
         form_lay.addWidget(self.total_off, 1, 5)
         form_lay.addWidget(self.btn_reset_off, 1, 6)
+        form_lay.addWidget(self.btn_delete_off, 1, 7)
         
         form_lay.addWidget(self.btn_submit_off, 2, 4, 1, 2)
         lay.addWidget(form_frame)
@@ -327,6 +418,10 @@ class CatatanHarianView(QWidget):
         self.btn_reset_op.clicked.connect(self.reset_operasional_form)
         self.btn_reset_op.hide()
 
+        self.btn_delete_op = CyberButton("HAPUS", is_danger=True)
+        self.btn_delete_op.clicked.connect(self.delete_operasional)
+        self.btn_delete_op.hide()
+
         form_lay.addWidget(QLabel("Tanggal:"))
         form_lay.addWidget(self.date_op)
         form_lay.addWidget(QLabel("  Jenis:"))
@@ -337,6 +432,7 @@ class CatatanHarianView(QWidget):
         form_lay.addWidget(self.nominal_op)
         form_lay.addWidget(self.btn_submit_op)
         form_lay.addWidget(self.btn_reset_op)
+        form_lay.addWidget(self.btn_delete_op)
         
         lay.addWidget(form_frame)
 
@@ -377,7 +473,7 @@ class CatatanHarianView(QWidget):
                 self.person_off.addItem(text, p.id)
 
     def load_hasil_cutting(self):
-        records = self.db.query(HasilCutting).order_by(HasilCutting.tanggal.desc(), HasilCutting.id.desc()).limit(100).all()
+        records = self.db.query(HasilCutting).filter(HasilCutting.is_deleted == 0).order_by(HasilCutting.tanggal.desc(), HasilCutting.id.desc()).limit(100).all()
         self.table_cutting.setRowCount(len(records))
         for row, rec in enumerate(records):
             self.table_cutting.setItem(row, 0, QTableWidgetItem(str(rec.id)))
@@ -395,7 +491,7 @@ class CatatanHarianView(QWidget):
             self.table_cutting.setItem(row, 4, qty_item)
 
     def load_distribusi(self):
-        records = self.db.query(DistribusiCutting).order_by(DistribusiCutting.tanggal.desc(), DistribusiCutting.id.desc()).limit(100).all()
+        records = self.db.query(DistribusiCutting).filter(DistribusiCutting.is_deleted == 0).order_by(DistribusiCutting.tanggal.desc(), DistribusiCutting.id.desc()).limit(100).all()
         self.table_distribusi.setRowCount(len(records))
         for row, rec in enumerate(records):
             self.table_distribusi.setItem(row, 0, QTableWidgetItem(str(rec.id)))
@@ -414,7 +510,7 @@ class CatatanHarianView(QWidget):
             self.table_distribusi.setItem(row, 6, qty_item)
 
     def load_offline(self):
-        records = self.db.query(PengeluaranOffline).order_by(PengeluaranOffline.tanggal.desc(), PengeluaranOffline.id.desc()).limit(100).all()
+        records = self.db.query(PengeluaranOffline).filter(PengeluaranOffline.is_deleted == 0).order_by(PengeluaranOffline.tanggal.desc(), PengeluaranOffline.id.desc()).limit(100).all()
         self.table_offline.setRowCount(len(records))
         for row, rec in enumerate(records):
             self.table_offline.setItem(row, 0, QTableWidgetItem(str(rec.id)))
@@ -432,7 +528,7 @@ class CatatanHarianView(QWidget):
             self.table_offline.setItem(row, 6, total_item)
 
     def load_operasional(self):
-        records = self.db.query(ModalOperasional).order_by(ModalOperasional.tanggal.desc(), ModalOperasional.id.desc()).limit(100).all()
+        records = self.db.query(ModalOperasional).filter(ModalOperasional.is_deleted == 0).order_by(ModalOperasional.tanggal.desc(), ModalOperasional.id.desc()).limit(100).all()
         self.table_operasional.setRowCount(len(records))
         for row, rec in enumerate(records):
             self.table_operasional.setItem(row, 0, QTableWidgetItem(str(rec.id)))
@@ -498,6 +594,7 @@ class CatatanHarianView(QWidget):
             # Ubah state UI
             self.btn_submit_cut.setText("UPDATE CUTTING")
             self.btn_reset_cut.show()
+            self.btn_delete_cut.show()
 
     def reset_cutting_form(self):
         self.selected_cut_id = None
@@ -506,6 +603,7 @@ class CatatanHarianView(QWidget):
         self.sku_cut.setCurrentIndex(0)
         self.btn_submit_cut.setText("SIMPAN CUTTING")
         self.btn_reset_cut.hide()
+        self.btn_delete_cut.hide()
         self.table_cutting.clearSelection()
     
     # ==========================================
@@ -554,7 +652,10 @@ class CatatanHarianView(QWidget):
             # Now query for cuttings with the current kode_produksi
             cuttings = self.db.query(HasilCutting).filter(HasilCutting.kode_produksi == current_kode_produksi).all()
             for c in cuttings:
-                distribusis = self.db.query(DistribusiCutting).filter(DistribusiCutting.hasil_cutting_id == c.id).all()
+                distribusis = self.db.query(DistribusiCutting).filter(
+                    DistribusiCutting.hasil_cutting_id == c.id,
+                    DistribusiCutting.is_deleted == 0
+                ).all()
                 # Abaikan distribusi yang sedang di-edit ini saat menghitung barang terpakai
                 terpakai = sum(d.qty for d in distribusis if d.id != self.selected_dist_id)
                 sisa_tersedia_untuk_edit = c.qty - terpakai
@@ -577,6 +678,7 @@ class CatatanHarianView(QWidget):
             # 7. Update UI Buttons
             self.btn_submit_dist.setText("UPDATE DISTRIBUSI")
             self.btn_reset_dist.show()
+            self.btn_delete_dist.show()
 
     def reset_distribusi_form(self):
         self.selected_dist_id = None
@@ -586,6 +688,7 @@ class CatatanHarianView(QWidget):
         self.dist_sumber_cutting.setCurrentIndex(0) # Reset the sumber cutting dropdown
         self.btn_submit_dist.setText("SIMPAN DISTRIBUSI")
         self.btn_reset_dist.hide()
+        self.btn_delete_dist.hide()
         self.table_distribusi.clearSelection()
 
     # ==========================================
@@ -595,7 +698,7 @@ class CatatanHarianView(QWidget):
         selected = self.table_offline.selectedItems()
         if not selected: return
         row = selected[0].row()
-        item_id = self.table_cutting.item(row, 0)
+        item_id = self.table_offline.item(row, 0)
         if not item_id or not item_id.text().strip(): return
         self.selected_off_id = int(item_id.text().strip())
         
@@ -615,6 +718,7 @@ class CatatanHarianView(QWidget):
             
             self.btn_submit_off.setText("UPDATE PENJUALAN")
             self.btn_reset_off.show()
+            self.btn_delete_off.show()
 
     def reset_offline_form(self):
         self.selected_off_id = None
@@ -624,6 +728,7 @@ class CatatanHarianView(QWidget):
         self.sku_off.setCurrentIndex(0)
         self.btn_submit_off.setText("SIMPAN PENJUALAN")
         self.btn_reset_off.hide()
+        self.btn_delete_off.hide()
         self.table_offline.clearSelection()
 
     # ==========================================
@@ -650,6 +755,7 @@ class CatatanHarianView(QWidget):
             
             self.btn_submit_op.setText("UPDATE PENGELUARAN")
             self.btn_reset_op.show()
+            self.btn_delete_op.show()
 
     def reset_operasional_form(self):
         self.selected_op_id = None
@@ -658,6 +764,7 @@ class CatatanHarianView(QWidget):
         self.jenis_op.setCurrentIndex(0)
         self.btn_submit_op.setText("SIMPAN PENGELUARAN")
         self.btn_reset_op.hide()
+        self.btn_delete_op.hide()
         self.table_operasional.clearSelection()
 
     def on_dist_kode_changed(self):
@@ -673,7 +780,10 @@ class CatatanHarianView(QWidget):
             cuttings = self.db.query(HasilCutting).filter(HasilCutting.kode_produksi == kode_terpilih).all()
             for c in cuttings:
                 # Hitung sisa potongan yang belum didistribusikan
-                distribusis = self.db.query(DistribusiCutting).filter(DistribusiCutting.hasil_cutting_id == c.id).all()
+                distribusis = self.db.query(DistribusiCutting).filter(
+                    DistribusiCutting.hasil_cutting_id == c.id,
+                    DistribusiCutting.is_deleted == 0
+                ).all()
                 terpakai = sum(d.qty for d in distribusis)
                 sisa = c.qty - terpakai
                 
@@ -690,7 +800,10 @@ class CatatanHarianView(QWidget):
         if cutting_id:
             c = self.db.query(HasilCutting).get(cutting_id)
             if c:
-                distribusis = self.db.query(DistribusiCutting).filter(DistribusiCutting.hasil_cutting_id == c.id).all()
+                distribusis = self.db.query(DistribusiCutting).filter(
+                    DistribusiCutting.hasil_cutting_id == c.id,
+                    DistribusiCutting.is_deleted == 0
+                ).all()
                 terpakai = sum(d.qty for d in distribusis)
                 sisa = c.qty - terpakai
                 self.qty_dist.setValue(sisa) # Auto-fill, tapi masih bisa diedit manual oleh user
@@ -747,6 +860,7 @@ class CatatanHarianView(QWidget):
                 self.notifier.database_changed.emit()
             self.load_hasil_cutting()
             self.load_sumber_dropdowns()
+            self.apply_search_filter()
             self.reset_cutting_form() # Panggil reset form
             QMessageBox.information(self, "Sukses", msg)
             
@@ -802,6 +916,7 @@ class CatatanHarianView(QWidget):
                 self.notifier.database_changed.emit()
             self.load_distribusi()
             self.on_dist_kode_changed() # Refresh dropdown sisa qty otomatis
+            self.apply_search_filter()
             self.reset_distribusi_form() # Reset Form setelah sukses
             self.person_dist.lineEdit().clear()
             QMessageBox.information(self, "Sukses", msg)
@@ -844,6 +959,7 @@ class CatatanHarianView(QWidget):
                 print("[*] Broadcasting database changes to all menus...")
                 self.notifier.database_changed.emit()
             self.load_offline()
+            self.apply_search_filter()
             self.reset_offline_form()
             QMessageBox.information(self, "Sukses", msg)
             
@@ -886,6 +1002,7 @@ class CatatanHarianView(QWidget):
                 print("[*] Broadcasting database changes to all menus...")
                 self.notifier.database_changed.emit()
             self.load_operasional()
+            self.apply_search_filter()
             self.reset_operasional_form() # Panggil fungsi reset form setelah sukses
             QMessageBox.information(self, "Sukses", msg)
             
@@ -893,7 +1010,125 @@ class CatatanHarianView(QWidget):
             self.db.rollback()
             self.db.expire_all()
             QMessageBox.critical(self, "Error", f"Gagal menyimpan: {e}")
-            
+
+    # ==========================================
+    # DELETE ACTIONS (soft delete is_deleted = 1)
+    # ==========================================
+    def delete_cutting(self):
+        if not self.selected_cut_id:
+            return
+        reply = QMessageBox.question(
+            self, "Konfirmasi Hapus",
+            "Hapus data Hasil Cutting ini?\n\n"
+            "⚠️ Distribusi Jahit yang terkait dengan cutting ini TURUT DIHAPUS.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+        try:
+            record = self.db.query(HasilCutting).get(self.selected_cut_id)
+            if record:
+                # Soft delete distribusi terkait
+                for d in self.db.query(DistribusiCutting).filter(
+                    DistribusiCutting.hasil_cutting_id == record.id,
+                    DistribusiCutting.is_deleted == 0
+                ).all():
+                    d.is_deleted = 1
+                # Soft delete hasil cutting
+                record.is_deleted = 1
+                self.db.commit()
+                if hasattr(self, 'notifier') and self.notifier:
+                    self.notifier.database_changed.emit()
+                self.load_hasil_cutting()
+                self.load_distribusi()
+                self.load_sumber_dropdowns()
+                self.apply_search_filter()
+                self.reset_cutting_form()
+                QMessageBox.information(self, "Sukses", "Data Cutting dan distribusi terkait berhasil dihapus.")
+        except Exception as e:
+            self.db.rollback()
+            self.db.expire_all()
+            QMessageBox.critical(self, "Error", f"Gagal menghapus: {e}")
+
+    def delete_distribusi(self):
+        if not self.selected_dist_id:
+            return
+        reply = QMessageBox.question(
+            self, "Konfirmasi Hapus",
+            "Yakin hapus data Distribusi Jahit ini?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+        try:
+            record = self.db.query(DistribusiCutting).get(self.selected_dist_id)
+            if record:
+                record.is_deleted = 1
+                self.db.commit()
+                if hasattr(self, 'notifier') and self.notifier:
+                    self.notifier.database_changed.emit()
+                self.load_distribusi()
+                self.on_dist_kode_changed()
+                self.apply_search_filter()
+                self.reset_distribusi_form()
+                QMessageBox.information(self, "Sukses", "Data Distribusi berhasil dihapus.")
+        except Exception as e:
+            self.db.rollback()
+            self.db.expire_all()
+            QMessageBox.critical(self, "Error", f"Gagal menghapus: {e}")
+
+    def delete_offline(self):
+        if not self.selected_off_id:
+            return
+        reply = QMessageBox.question(
+            self, "Konfirmasi Hapus",
+            "Yakin hapus data Pengeluaran Offline ini?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+        try:
+            record = self.db.query(PengeluaranOffline).get(self.selected_off_id)
+            if record:
+                record.is_deleted = 1
+                self.db.commit()
+                if hasattr(self, 'notifier') and self.notifier:
+                    self.notifier.database_changed.emit()
+                self.load_offline()
+                self.apply_search_filter()
+                self.reset_offline_form()
+                QMessageBox.information(self, "Sukses", "Data Pengeluaran Offline berhasil dihapus.")
+        except Exception as e:
+            self.db.rollback()
+            self.db.expire_all()
+            QMessageBox.critical(self, "Error", f"Gagal menghapus: {e}")
+
+    def delete_operasional(self):
+        if not self.selected_op_id:
+            return
+        reply = QMessageBox.question(
+            self, "Konfirmasi Hapus",
+            "Yakin hapus data Modal Operasional ini?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+        try:
+            record = self.db.query(ModalOperasional).get(self.selected_op_id)
+            if record:
+                record.is_deleted = 1
+                self.db.commit()
+                if hasattr(self, 'notifier') and self.notifier:
+                    self.notifier.database_changed.emit()
+                self.load_operasional()
+                self.apply_search_filter()
+                self.reset_operasional_form()
+                QMessageBox.information(self, "Sukses", "Data Modal Operasional berhasil dihapus.")
+        except Exception as e:
+            self.db.rollback()
+            self.db.expire_all()
+            QMessageBox.critical(self, "Error", f"Gagal menghapus: {e}")
+
     def closeEvent(self, event):
         self.db.close()
         super().closeEvent(event)

@@ -191,58 +191,21 @@ All previously open bugs in `catatan_harian ↔ hutang ↔ profit` were resolved
 
 ---
 
-## 8. Open Issues & Active Work
-
-### 8.1 Stock staging — `_set_number_item` missing on `StockView` ~~> **FIXED** (2026-06-24)
-**Status**: ✅ Fixed
-**File**: `ui/views/stock_view.py`, `add_to_staging()` line 191
-
-**Symptom** (reported by user)
-- Clicking "Tambahkan ke staging" di Stock Manager: kolom SKU di tabel staging selalu sama untuk semua baris; kolom lain (qty, dll.) kosong di tabel.
-- Export Excel: kolom numerik terisi, tapi SKU semua baris identik.
-- Terminal logs error berulang:
-  ```
-  AttributeError: 'StockView' object has no attribute '_set_number_item'
-    File "...ui/views/stock_view.py", line 191, in add_to_staging
-        self._set_number_item(self.table_staging, row, 1, qty)
-  ```
-
-**Root cause**
-`add_to_staging()` memanggil `self._set_number_item(...)` padahal helper tidak ada di kelas `StockView` — method ini ikut terhapus bersama tab Live Dashboard di commit `19369bd2`. Exception terjadi **di tengah** proses set baris → cell SKU yang lebih awal sempat terbentuk, cell numerik tidak → render berkesan "baris ke-N pake SKU baris pertama, kolom lain kosong".
-
-**Fix applied: Option B — Inline replacement**
-
-1. **Analyze** (✅ selesai 2026-06-24):
-   - [x] Baca `ui/views/stock_view.py` fokus area `add_to_staging` — ditemukan 1 callsite `_set_number_item` di line 191. Tidak ada callsite lain di file tersebut.
-   - [x] Baca `ui/components/tables.py` — `CyberTable` adalah styling wrapper murni, tidak ada helper `set_number_item`.
-   - [x] `git log` — method asli:
-         ```python
-         def _set_number_item(self, table, row, col, val, color=None):
-             item = QTableWidgetItem(f"{val:,}")
-             item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-             if color: item.setForeground(QBrush(QColor(color)))
-             table.setItem(row, col, item)
-         ```
-
-2. **Mapped solution**: Pilih Opsi **B — Inline** karena hanya 1 callsite dan method asli bagian dari Live Dashboard (sudah dihapus).
-3. **Fix** (✅ selesai 2026-06-24): line 191 diganti dengan inline `QTableWidgetItem(f"{qty:,}")` dengan `setTextAlignment(Qt.AlignCenter)` — mempertahankan thousand separator dari implementasi asli tanpa resurrect method mati.
-4. **Verify** ✅ (2026-06-24, confirmed by user):
-   - [x] Buka app, input 2-3 SKU berbeda dengan qty berbeda, pastikan tabel staging menampilkan baris unik tanpa `AttributeError` di terminal.
-   - [x] Export Excel dan periksa hasilnya.
-
-**Out of scope**
-- Tidak ada perubahan struktur tabel / kolom.
-- Tidak ada refactor di luar line 191.
+## 8. Active Work — (kosong — siap untuk Session 8)
 
 ---
 
 ## 9. Session Log (frozen — for context only)
 
-1. ✅ Removed features (`bi_agent`, Live Dashboard, `overhead` from UI).
-2. ✅ Built dashboard query functions (`data/dashboard_queries.py`).
-3. ✅ Added `profit_history` model + migration + wired up `profit_view.py`.
-4. ✅ Built `dashboard_view.py` (layout + data wiring) and registered in `main.py`.
-5. ✅ Bug-fixed `catatan_harian ↔ hutang ↔ profit` cross-view flow.
+Setiap entry = satu session kerja. Format: satu baris per session.
+Lihat Rule 10.9 untuk panduan penulisan.
+
+1. ✅ Session 1–2: Removed bi_agent/Live Dashboard/overhead; built dashboard query functions.
+2. ✅ Session 3: Added profit_history model + migration + wired up profit_view.py.
+3. ✅ Session 4: Built dashboard_view.py (layout + data wiring) + registered in main.py.
+4. ✅ Session 5 (2026-06-24): Bug-fixed catatan_harian↔hutang↔profit flow; fixed StockView helper.
+5. ✅ Session 6 (2026-06-25): Fitur Search Global & Tombol Hapus di Catatan Harian.
+6. ✅ Session 7 (2026-06-26): Font PDF Courier→Helvetica; Profit tanggal kain acuan dari Hutang; Anti-duplicate payroll; Auto-sinkron Data Manager→semua menu; Fix edit/hapus Pengeluaran Offline.
 
 No historical "TODO" / "ada bug" lines should remain in code unless explicitly
 re-opened by the user.
@@ -263,3 +226,6 @@ Before touching anything, re-read this list.
 7. ✅ Before deleting or overwriting, re-read the target — surface contradictions
    instead of silently proceeding.
 8. ✅ Confirm before any hard-to-reverse or outward-facing action.
+9. ✅ **Session Log satu baris per session.** Setiap entry di Session Log (section 9)
+   hanya satu baris, format: `N. ✅ Session X (YYYY-MM-DD): Deskripsi singkat —
+   file terkunci.` Tidak perlu detail teknis panjang; simpan di Active Work saja.

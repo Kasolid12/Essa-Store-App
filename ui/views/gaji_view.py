@@ -801,23 +801,53 @@ class GajiView(QWidget):
 
         try:
             tanggal_str = self.penj_date.date().toString("yyyy-MM-dd")
-            run = SalaryRun(tipe="BORONGAN_PENJAHIT", person_id=person_id, tanggal_proses=tanggal_str, gaji_kotor=gaji_kotor,
-                            bon_lama=bon_lama, tambah_bon=tambah_bon, potong_bon=potong_bon, gaji_bersih=gaji_bersih, sisa_bon_akhir=sisa_bon_akhir)
-            self.db.add(run); self.db.flush()
 
-            items_for_pdf = [] # Kumpulkan untuk PDF
-
-            for item in self.cart_penjahit:
-                # FIX DB BUG: Pastikan sku_id di-handle aman jika None
-                line = SalaryLineItem(salary_run_id=run.id, sku_id=item.get('sku_id'), model_code=item['nama_garapan'], 
-                                      qty=item['qty'], tarif_per_pcs=item['harga'], subtotal=item['total'])
-                self.db.add(line)
-                items_for_pdf.append({"garapan": item['nama_garapan'], "qty": item['qty'], "harga": item['harga'], "total": item['total']})
+            # --- DEDUP: update existing jika sudah ada payroll untuk person+tanggal ini ---
+            run = self.db.query(SalaryRun).filter(
+                SalaryRun.tipe == "BORONGAN_PENJAHIT",
+                SalaryRun.person_id == person_id,
+                SalaryRun.tanggal_proses == tanggal_str,
+                SalaryRun.is_deleted == 0
+            ).first()
 
             balance = self.db.query(BonBalance).filter(BonBalance.person_id == person_id).first()
             if not balance:
                 balance = BonBalance(person_id=person_id, saldo=0)
                 self.db.add(balance)
+
+            if run:
+                # UPDATE: hapus line items lama, reverse bon, timpa fields
+                self.db.query(SalaryLineItem).filter(SalaryLineItem.salary_run_id == run.id).delete()
+                old_tambah = run.tambah_bon or 0
+                old_potong = run.potong_bon or 0
+                balance.saldo -= old_tambah
+                balance.saldo += old_potong
+                self.db.query(BonMovement).filter(
+                    BonMovement.sumber == "PAYROLL_PENJAHIT",
+                    BonMovement.person_id == person_id,
+                    BonMovement.tanggal == tanggal_str
+                ).delete(synchronize_session=False)
+                run.gaji_kotor = gaji_kotor
+                run.bon_lama = bon_lama
+                run.tambah_bon = tambah_bon
+                run.potong_bon = potong_bon
+                run.gaji_bersih = gaji_bersih
+                run.sisa_bon_akhir = sisa_bon_akhir
+            else:
+                # INSERT: buat baru
+                run = SalaryRun(tipe="BORONGAN_PENJAHIT", person_id=person_id, tanggal_proses=tanggal_str, gaji_kotor=gaji_kotor,
+                                bon_lama=bon_lama, tambah_bon=tambah_bon, potong_bon=potong_bon, gaji_bersih=gaji_bersih, sisa_bon_akhir=sisa_bon_akhir)
+                self.db.add(run)
+            self.db.flush()
+
+            items_for_pdf = [] # Kumpulkan untuk PDF
+
+            for item in self.cart_penjahit:
+                # FIX DB BUG: Pastikan sku_id di-handle aman jika None
+                line = SalaryLineItem(salary_run_id=run.id, sku_id=item.get('sku_id'), model_code=item['nama_garapan'],
+                                      qty=item['qty'], tarif_per_pcs=item['harga'], subtotal=item['total'])
+                self.db.add(line)
+                items_for_pdf.append({"garapan": item['nama_garapan'], "qty": item['qty'], "harga": item['harga'], "total": item['total']})
 
             if tambah_bon > 0:
                 self.db.add(BonMovement(person_id=person_id, tanggal=tanggal_str, tipe="TAMBAH", nominal=tambah_bon, sumber="PAYROLL_PENJAHIT"))
@@ -1007,12 +1037,45 @@ class GajiView(QWidget):
 
         try:
             tanggal_str = self.psup_date.date().toString("yyyy-MM-dd")
-            run = SalaryRun(
-                tipe="PENGSUP", person_id=person_id, tanggal_proses=tanggal_str, 
-                gaji_kotor=gaji_kotor, bon_lama=bon_lama, tambah_bon=tambah_bon, 
-                potong_bon=potong_bon, gaji_bersih=gaji_bersih, sisa_bon_akhir=sisa_bon_akhir
-            )
-            self.db.add(run)
+
+            # --- DEDUP: update existing jika sudah ada payroll pengsup utk person+tanggal ini ---
+            run = self.db.query(SalaryRun).filter(
+                SalaryRun.tipe == "PENGSUP",
+                SalaryRun.person_id == person_id,
+                SalaryRun.tanggal_proses == tanggal_str,
+                SalaryRun.is_deleted == 0
+            ).first()
+
+            balance = self.db.query(BonBalance).filter(BonBalance.person_id == person_id).first()
+            if not balance:
+                balance = BonBalance(person_id=person_id, saldo=0)
+                self.db.add(balance)
+
+            if run:
+                # UPDATE: hapus line items lama, reverse bon, timpa fields
+                self.db.query(SalaryLineItem).filter(SalaryLineItem.salary_run_id == run.id).delete()
+                old_tambah = run.tambah_bon or 0
+                old_potong = run.potong_bon or 0
+                balance.saldo -= old_tambah
+                balance.saldo += old_potong
+                self.db.query(BonMovement).filter(
+                    BonMovement.sumber == "PAYROLL_PENGSUP",
+                    BonMovement.person_id == person_id,
+                    BonMovement.tanggal == tanggal_str
+                ).delete(synchronize_session=False)
+                run.gaji_kotor = gaji_kotor
+                run.bon_lama = bon_lama
+                run.tambah_bon = tambah_bon
+                run.potong_bon = potong_bon
+                run.gaji_bersih = gaji_bersih
+                run.sisa_bon_akhir = sisa_bon_akhir
+            else:
+                run = SalaryRun(
+                    tipe="PENGSUP", person_id=person_id, tanggal_proses=tanggal_str,
+                    gaji_kotor=gaji_kotor, bon_lama=bon_lama, tambah_bon=tambah_bon,
+                    potong_bon=potong_bon, gaji_bersih=gaji_bersih, sisa_bon_akhir=sisa_bon_akhir
+                )
+                self.db.add(run)
             self.db.flush()
 
             # --- 4. SIMPAN KAIN MENTAH SEBAGAI ITEM RAHASIA KE SQLITE ---
@@ -1028,19 +1091,13 @@ class GajiView(QWidget):
             for item in self.cart_pengsup:
                 tipe_garapan = item.get('tipe', '')
                 prefix = "[POTONG] " if "Potongan" in tipe_garapan else "[BARANG] "
-                
+
                 line = SalaryLineItem(
                     salary_run_id=run.id, sku_id=item.get('sku_id'),
-                    model_code=prefix + item['nama_garapan'], 
+                    model_code=prefix + item['nama_garapan'],
                     qty=item['qty'], tarif_per_pcs=item['harga'], subtotal=item['total']
                 )
                 self.db.add(line)
-
-            # Update Kasbon
-            balance = self.db.query(BonBalance).filter(BonBalance.person_id == person_id).first()
-            if not balance:
-                balance = BonBalance(person_id=person_id, saldo=0)
-                self.db.add(balance)
 
             if tambah_bon > 0:
                 self.db.add(BonMovement(person_id=person_id, tanggal=tanggal_str, tipe="TAMBAH", nominal=tambah_bon, sumber="PAYROLL_PENGSUP"))
@@ -1417,6 +1474,7 @@ class GajiView(QWidget):
         run_ids_to_print = []
         jml_berhasil = 0
         try:
+            from data.models.salary import AttendanceRecord
             person_ids_di_layar = []
             for row in range(self.table_pasukan.rowCount()):
                 it_id = self.table_pasukan.item(row, 0)
@@ -1464,15 +1522,45 @@ class GajiView(QWidget):
                     # Catat tarif yang digunakan ke dalam keterangan string sebagai cadangan visual
                     keterangan = f"Hadir: {txt_hadir} | Normal: {mnt_normal:g} (@{trf_normal_aktual:g}) | Lembur: {mnt_lembur:g} (@{trf_lembur_aktual:g})"
 
-                    # 1. Simpan data induk run gaji
-                    run = SalaryRun(
-                        tipe="PASUKAN_KARYAWAN", person_id=p_id, tanggal_proses=tanggal_str,
-                        gaji_kotor=gaji_kotor, bon_lama=bon_lama, tambah_bon=0,
-                        potong_bon=potong_bon, gaji_bersih=gaji_bersih, sisa_bon_akhir=sisa_bon_akhir,
-                        catatan=keterangan
-                    )
-                    self.db.add(run)
-                    self.db.flush() 
+                    # --- DEDUP: update existing jika sudah ada payroll karyawan utk person+tanggal ini ---
+                    run = self.db.query(SalaryRun).filter(
+                        SalaryRun.tipe == "PASUKAN_KARYAWAN",
+                        SalaryRun.person_id == p_id,
+                        SalaryRun.tanggal_proses == tanggal_str,
+                        SalaryRun.is_deleted == 0
+                    ).first()
+
+                    balance = dict_obj_balances.get(p_id)
+
+                    if run:
+                        # UPDATE: hapus line items & attendance lama, reverse bon, timpa fields
+                        self.db.query(SalaryLineItem).filter(SalaryLineItem.salary_run_id == run.id).delete()
+                        self.db.query(AttendanceRecord).filter(AttendanceRecord.salary_run_id == run.id).delete()
+                        old_potong = run.potong_bon or 0
+                        if balance:
+                            balance.saldo += old_potong
+                        self.db.query(BonMovement).filter(
+                            BonMovement.sumber == "PAYROLL_KARYAWAN",
+                            BonMovement.person_id == p_id,
+                            BonMovement.tanggal == tanggal_str
+                        ).delete(synchronize_session=False)
+                        run.gaji_kotor = gaji_kotor
+                        run.bon_lama = bon_lama
+                        run.tambah_bon = 0
+                        run.potong_bon = potong_bon
+                        run.gaji_bersih = gaji_bersih
+                        run.sisa_bon_akhir = sisa_bon_akhir
+                        run.catatan = keterangan
+                    else:
+                        # INSERT: buat baru
+                        run = SalaryRun(
+                            tipe="PASUKAN_KARYAWAN", person_id=p_id, tanggal_proses=tanggal_str,
+                            gaji_kotor=gaji_kotor, bon_lama=bon_lama, tambah_bon=0,
+                            potong_bon=potong_bon, gaji_bersih=gaji_bersih, sisa_bon_akhir=sisa_bon_akhir,
+                            catatan=keterangan
+                        )
+                        self.db.add(run)
+                    self.db.flush()
                     run_ids_to_print.append(run.id)
 
                     # =======================================================
@@ -1503,7 +1591,6 @@ class GajiView(QWidget):
                     if hasattr(self, 'cache_absensi_harian') and self.cache_absensi_harian:
                         for cache_name, daily_list in self.cache_absensi_harian.items():
                             if p_nama in cache_name or cache_name in p_nama:
-                                from data.models.salary import AttendanceRecord
                                 for harian in daily_list:
                                     rec = AttendanceRecord(
                                         salary_run_id=run.id, person_id=p_id,
@@ -1515,7 +1602,6 @@ class GajiView(QWidget):
 
                     # Update Saldo Kasbon Karyawan
                     if potong_bon > 0:
-                        balance = dict_obj_balances.get(p_id)
                         if balance:
                             balance.saldo -= potong_bon
                             self.db.add(BonMovement(person_id=p_id, tanggal=tanggal_str, tipe="POTONG_GAJI", nominal=potong_bon, sumber="PAYROLL_KARYAWAN"))
