@@ -16,14 +16,201 @@ def format_rupiah(angka):
     except:
         return "Rp 0"
 
-def generate_salary_slip(salary_run_id):
+def generate_batch_karyawan_slip(run_ids, tanggal_proses):
     """
-    Generator PDF Cerdas: 
-    Otomatis menyesuaikan tata letak untuk Penjahit, Pengsup, atau Karyawan.
+    Generate PDF gabungan untuk semua karyawan dalam satu file.
+    Format nama file: SLIP_Gaji Karyawan_DDMMYY.pdf
     """
     from reportlab.lib.pagesizes import A5
     from reportlab.pdfgen import canvas
     from reportlab.lib.units import mm
+    from data.database import SessionLocal
+    from data.models.salary import SalaryRun, AttendanceRecord, SalaryLineItem
+    import os
+
+    db = SessionLocal()
+    try:
+        # Ambil semua run data
+        runs = db.query(SalaryRun).filter(SalaryRun.id.in_(run_ids)).all()
+        if not runs:
+            raise ValueError("Tidak ada data SalaryRun untuk dicetak.")
+
+        # Urutkan berdasarkan nama karyawan
+        runs.sort(key=lambda r: r.person.nama.lower() if r.person else "")
+
+        # Siapkan folder ekspor
+        export_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "exports", "slips")
+        os.makedirs(export_dir, exist_ok=True)
+
+        # Format nama file: SLIP_Gaji Karyawan_DDMMYY.pdf
+        # tanggal_proses format: "yyyy-MM-dd" -> konversi ke DDMMYY
+        try:
+            tgl_obj = datetime.strptime(tanggal_proses, "%Y-%m-%d")
+            tgl_str = tgl_obj.strftime("%d%m%y")
+        except:
+            tgl_str = datetime.now().strftime("%d%m%y")
+
+        filename = f"SLIP_Gaji Karyawan_{tgl_str}.pdf"
+        filepath = os.path.join(export_dir, filename)
+
+        c = canvas.Canvas(filepath, pagesize=A5)
+        width, height = A5
+
+        def draw_header(run):
+            """Gambar header untuk setiap karyawan"""
+            person = run.person
+            nama_person = person.nama.upper() if person else "UNKNOWN"
+            id_person = person.id if person else "-"
+
+            c.setFont("Helvetica-Bold", 12)
+            c.drawString(10*mm, height - 15*mm, "ESSA STORE - SLIP GAJI KARYAWAN")
+            c.setFont("Helvetica", 10)
+            c.drawString(10*mm, height - 25*mm, f"ID Karyawan : {id_person}")
+            c.drawString(10*mm, height - 30*mm, f"Nama        : {nama_person}")
+            c.drawString(10*mm, height - 35*mm, f"Tanggal     : {run.tanggal_proses}")
+
+        def draw_footer():
+            """Gambar footer"""
+            c.setFont("Helvetica-Oblique", 8)
+            c.drawCentredString(width/2.0, 15*mm, "*Nota ini dicetak secara otomatis oleh Sistem Essa Store")
+
+        for idx, run in enumerate(runs):
+            person = run.person
+            nama_person = person.nama.upper() if person else "UNKNOWN"
+
+            # Header
+            draw_header(run)
+            y = height - 45*mm
+
+            # ========================================================
+            # BAGIAN 1: RINCIAN JAM KERJA (Khusus Karyawan)
+            # ========================================================
+            attendances = db.query(AttendanceRecord).filter(AttendanceRecord.salary_run_id == run.id).all()
+
+            c.setFont("Helvetica-Bold", 8)
+            c.drawString(10*mm, y, "Tanggal")
+            c.drawString(35*mm, y, "Masuk")
+            c.drawString(55*mm, y, "Keluar")
+            c.drawRightString(95*mm, y, "Tot. Menit")
+            c.drawRightString(138*mm, y, "Lembur")
+
+            c.line(10*mm, y-2*mm, 138*mm, y-2*mm)
+            y -= 6*mm
+
+            c.setFont("Helvetica", 8)
+            if attendances:
+                for att in attendances:
+                    c.drawString(10*mm, y, str(att.tanggal))
+                    c.drawString(35*mm, y, str(att.tap_masuk))
+                    c.drawString(55*mm, y, str(att.tap_keluar))
+                    c.drawRightString(95*mm, y, f"{att.menit_normal:g}")
+                    c.drawRightString(138*mm, y, f"{att.menit_lembur:g}")
+                    y -= 5*mm
+                    if y < 45*mm:
+                        c.showPage()
+                        draw_header(run)
+                        y = height - 45*mm
+                        c.setFont("Helvetica", 8)
+            else:
+                c.drawString(10*mm, y, "Data rincian harian (tap) tidak tersedia dari Excel.")
+                y -= 5*mm
+
+            # ========================================================
+            # BAGIAN 2: RINCIAN PEMBAYARAN (dari SalaryLineItem)
+            # ========================================================
+            line_items = db.query(SalaryLineItem).filter(SalaryLineItem.salary_run_id == run.id).all()
+
+            qty_normal, tarif_normal, subtotal_normal = 0, 150.0, 0
+            qty_lembur, tarif_lembur, subtotal_lembur = 0, 160.0, 0
+
+            for item in line_items:
+                if item.model_code == "[GAJI_NORMAL]":
+                    qty_normal = item.qty
+                    tarif_normal = item.tarif_per_pcs
+                    subtotal_normal = item.subtotal
+                elif item.model_code == "[GAJI_LEMBUR]":
+                    qty_lembur = item.qty
+                    tarif_lembur = item.tarif_per_pcs
+                    subtotal_lembur = item.subtotal
+
+            y -= 2*mm
+            c.setFont("Helvetica-Bold", 9)
+            c.drawString(10*mm, y, "RINCIAN PEMBAYARAN:")
+            y -= 6*mm
+
+            c.setFont("Helvetica", 9)
+            c.drawString(10*mm, y, f"Gaji Normal ({qty_normal:g} mnt @Rp {tarif_normal:g})")
+            c.drawString(75*mm, y, ":")
+            c.drawRightString(138*mm, y, format_rupiah(subtotal_normal))
+            y -= 5*mm
+
+            c.drawString(10*mm, y, f"Gaji Lembur ({qty_lembur:g} mnt @Rp {tarif_lembur:g})")
+            c.drawString(75*mm, y, ":")
+            c.drawRightString(138*mm, y, format_rupiah(subtotal_lembur))
+            y -= 10*mm
+
+            # ========================================================
+            # BAGIAN 3: RINGKASAN FINANSIAL & KASBON
+            # ========================================================
+            c.line(10*mm, y, 138*mm, y)
+            y -= 6*mm
+
+            c.setFont("Helvetica-Bold", 10)
+            c.drawString(10*mm, y, "TOTAL GAJI KOTOR")
+            c.drawString(75*mm, y, ":")
+            c.drawRightString(138*mm, y, format_rupiah(run.gaji_kotor))
+            y -= 6*mm
+
+            c.setFont("Helvetica", 9)
+            if run.bon_lama > 0 or run.potong_bon > 0:
+                c.drawString(10*mm, y, "Sisa Bon Lama")
+                c.drawString(75*mm, y, ":")
+                c.drawRightString(138*mm, y, format_rupiah(run.bon_lama))
+                y -= 5*mm
+
+                c.drawString(10*mm, y, "POTONGAN MINGGU INI")
+                c.drawString(75*mm, y, ":")
+                c.drawRightString(138*mm, y, f"- {format_rupiah(run.potong_bon)}")
+                y -= 5*mm
+
+            c.line(75*mm, y+2*mm, 138*mm, y+2*mm)
+            y -= 6*mm
+
+            c.setFont("Helvetica-Bold", 10)
+            c.drawString(10*mm, y, "TOTAL GAJI BERSIH (DITERIMA)")
+            c.drawString(75*mm, y, ":")
+            c.drawRightString(138*mm, y, format_rupiah(run.gaji_bersih))
+            y -= 8*mm
+
+            if run.sisa_bon_akhir > 0:
+                c.setFont("Helvetica-Bold", 9)
+                c.drawString(10*mm, y, "SISA BON AKHIR (BELUM LUNAS)")
+                c.drawString(75*mm, y, ":")
+                c.drawRightString(138*mm, y, format_rupiah(run.sisa_bon_akhir))
+                y -= 10*mm
+
+            # Footer
+            draw_footer()
+
+            # Page break untuk karyawan berikutnya (kecuali yang terakhir)
+            if idx < len(runs) - 1:
+                c.showPage()
+
+        c.save()
+        return filepath
+
+    except Exception as e:
+        print(f"PDF Engine Error (Batch Karyawan): {e}")
+        raise e
+    finally:
+        db.close()
+
+
+def generate_salary_slip(salary_run_id):
+    """
+    Generator PDF Cerdas (per-karyawan):
+    Otomatis menyesuaikan tata letak untuk Penjahit, Pengsup, atau Karyawan.
+    """
     from data.database import SessionLocal
     from data.models.salary import SalaryRun
     import os
@@ -63,7 +250,7 @@ def generate_salary_slip(salary_run_id):
 
             c.drawString(10*mm, height - 15*mm, title)
             c.setFont("Helvetica", 10)
-            
+
             # Format header menyesuaikan jenis slip
             if run.tipe == "PASUKAN_KARYAWAN":
                 c.drawString(10*mm, height - 25*mm, f"ID Karyawan : {id_person}")
@@ -86,7 +273,7 @@ def generate_salary_slip(salary_run_id):
             c.drawString(75*mm, y, "Qty")
             c.drawString(95*mm, y, "HARGA")
             c.drawRightString(138*mm, y, "TOTAL")
-            
+
             c.line(10*mm, y-2*mm, 138*mm, y-2*mm) # Garis pembatas
             y -= 7*mm
 
@@ -96,7 +283,7 @@ def generate_salary_slip(salary_run_id):
                 if len(nama_garapan) > 23:
                     nama_garapan = nama_garapan[:20] + "..."
 
-                qty_str = f"{int(item.qty)}" if item.qty.is_integer() else f"{item.qty:g}"
+                qty_str = f"{int(item.qty)}" if float(item.qty).is_integer() else f"{item.qty:g}"
 
                 c.drawString(10*mm, y, nama_garapan)
                 c.drawString(75*mm, y, qty_str)
@@ -117,7 +304,7 @@ def generate_salary_slip(salary_run_id):
             list_barang = []
             list_potong = []
             mentah_item = None
-            
+
             # Deteksi item dari database berdasarkan TAG Rahasia
             for item in run.line_items:
                 code = str(item.model_code)
@@ -142,7 +329,7 @@ def generate_salary_slip(salary_run_id):
             for item in list_barang:
                 nama = str(item.model_code).replace("[BARANG] ", "")
                 if len(nama) > 23: nama = nama[:20] + "..."
-                qty_str = f"{int(item.qty)}" if item.qty.is_integer() else f"{item.qty:g}"
+                qty_str = f"{int(item.qty)}" if float(item.qty).is_integer() else f"{item.qty:g}"
 
                 c.drawString(10*mm, y, nama)
                 c.drawString(75*mm, y, qty_str)
@@ -162,12 +349,12 @@ def generate_salary_slip(salary_run_id):
             total_setelah_kain = total_barang
             if mentah_item:
                 c.setFont("Helvetica", 9)
-                qty_str = f"{int(mentah_item.qty)}" if mentah_item.qty.is_integer() else f"{mentah_item.qty:g}"
+                qty_str = f"{int(mentah_item.qty)}" if float(mentah_item.qty).is_integer() else f"{mentah_item.qty:g}"
                 c.drawString(10*mm, y, "KAIN")
                 c.drawString(75*mm, y, qty_str)
                 c.drawString(95*mm, y, format_rupiah(mentah_item.tarif_per_pcs).replace("Rp ", ""))
-                c.drawRightString(138*mm, y, format_rupiah(abs(mentah_item.subtotal))) 
-                
+                c.drawRightString(138*mm, y, format_rupiah(abs(mentah_item.subtotal)))
+
                 total_setelah_kain -= abs(mentah_item.subtotal)
                 y -= 5*mm
                 c.setFont("Helvetica-Bold", 9)
@@ -182,7 +369,7 @@ def generate_salary_slip(salary_run_id):
                 c.setFont("Helvetica-Bold", 9)
                 c.drawString(10*mm, y, "2. DAFTAR POTONGAN")
                 y -= 6*mm
-                
+
                 c.drawString(10*mm, y, "NAMA BARANG")
                 c.drawString(75*mm, y, "Qty")
                 c.drawString(95*mm, y, "HARGA")
@@ -194,7 +381,7 @@ def generate_salary_slip(salary_run_id):
                 for item in list_potong:
                     nama = str(item.model_code).replace("[POTONG] ", "")
                     if len(nama) > 23: nama = nama[:20] + "..."
-                    qty_str = f"{int(item.qty)}" if item.qty.is_integer() else f"{item.qty:g}"
+                    qty_str = f"{int(item.qty)}" if float(item.qty).is_integer() else f"{item.qty:g}"
 
                     c.drawString(10*mm, y, nama)
                     c.drawString(75*mm, y, qty_str)
@@ -233,7 +420,7 @@ def generate_salary_slip(salary_run_id):
             c.drawString(55*mm, y, "Keluar")
             c.drawRightString(95*mm, y, "Tot. Menit")
             c.drawRightString(138*mm, y, "Lembur")
-            
+
             c.line(10*mm, y-2*mm, 138*mm, y-2*mm)
             y -= 6*mm
 
@@ -253,11 +440,11 @@ def generate_salary_slip(salary_run_id):
 
             # 2. Tarik nilai tarif dinamis yang terekam di line items detail komponen
             line_items = db.query(SalaryLineItem).filter(SalaryLineItem.salary_run_id == run.id).all()
-            
+
             # Buat nilai fallback default jika seandainya data line items kosong
             qty_normal, tarif_normal, subtotal_normal = 0, 150.0, 0
             qty_lembur, tarif_lembur, subtotal_lembur = 0, 160.0, 0
-            
+
             for item in line_items:
                 if item.model_code == "[GAJI_NORMAL]":
                     qty_normal = item.qty
@@ -272,14 +459,14 @@ def generate_salary_slip(salary_run_id):
             c.setFont("Helvetica-Bold", 9)
             c.drawString(10*mm, y, "RINCIAN PEMBAYARAN:")
             y -= 6*mm
-            
+
             # Tulis baris slip menggunakan tarif kustom hasil editan kasir di tabel
             c.setFont("Helvetica", 9)
             c.drawString(10*mm, y, f"Gaji Normal ({qty_normal:g} mnt @Rp {tarif_normal:g})")
             c.drawString(75*mm, y, ":")
             c.drawRightString(138*mm, y, format_rupiah(subtotal_normal))
             y -= 5*mm
-            
+
             c.drawString(10*mm, y, f"Gaji Lembur ({qty_lembur:g} mnt @Rp {tarif_lembur:g})")
             c.drawString(75*mm, y, ":")
             c.drawRightString(138*mm, y, format_rupiah(subtotal_lembur))
@@ -335,7 +522,7 @@ def generate_salary_slip(salary_run_id):
 
         c.save()
         return filepath
-        
+
     except Exception as e:
         print(f"PDF Engine Error: {e}")
         raise e

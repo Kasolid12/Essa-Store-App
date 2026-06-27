@@ -191,7 +191,45 @@ All previously open bugs in `catatan_harian ↔ hutang ↔ profit` were resolved
 
 ---
 
-## 8. Active Work — (kosong — siap untuk Session 8)
+## 8. Active Work — Session 8 (2026-06-27)
+
+### Task A: Excel Importer (`data/excel_importer.py`)
+- **`import_sku_from_excel(filepath, session)`**: Baca MasterSKU.xlsx → upsert ke `SkuMaster`.
+  Format sheet "Master SKU": [Nomor SKU, Judul, Rata-Rata Modal Bobot].
+- **`import_tarif_from_excel(filepath, session)`**: Baca Master_tarif.xlsx → upsert ke `TarifMaster`.
+  Sheet "SKU_Pengsup": [Nomor SKU, Kain, Potongan] → `tarif_pengsup_kain`, `tarif_pengsup_potongan`.
+  Sheet "SKU_Penjahit": [SKU, Harga Satuan] → `tarif_jahit`.
+- **UI**: Tab baru "IMPORT EXCEL" di `master_view.py` — tombol pilih file + import.
+
+### Task B: Dashboard Profit Full-Cut Filter
+- **`data/dashboard_queries.py`** → `get_profit_produksi()`:
+  LEFT JOIN `profit_history` ↔ `debt_entries` via `debt_entry_id`.
+  Hanya hitung profit jika `de.status_cutting = 'SELESAI'` (full cut) atau `ph.debt_entry_id IS NULL`.
+  Status full-cut di-toggle via tombol "TANDAI KAIN HABIS (FULL CUT)" di Profit Simulation.
+
+### Task C: Bug Fix Payroll — "int object has no attribute is_integer"
+- ✅ Root cause: `SalaryLineItem.qty` adalah Integer column → `item.qty` return `int`, tapi dipanggil `.is_integer()` method milik `float`.
+- ✅ Fix: 4 baris di `utils/pdf_engine.py` — wrapping `float(item.qty)` sebelum `.is_integer()`.
+- ✅ Semua tab payroll dicek: Penjahit ✅, Pengsup ✅, Karyawan ✅, Bon ✅.
+
+### Task D: Fix Edit Jam Absensi Karyawan (read-only table)
+- ✅ Root cause: `CyberTable` default `NoEditTriggers` — tabel edit absensi tidak bisa diedit.
+- ✅ Fix: Override `setEditTriggers(DoubleClicked)` di `setup_tab_edit_karyawan()`.
+- ✅ Alur: double-click jam masuk/keluar → isi format `HH:MM` → tombol "HITUNG ULANG & TERAPKAN".
+
+### Task E: Karyawan diedit hilang dari PDF (format mismatch)
+- ✅ Root cause: `submit_edit_karyawan()` simpan tarif dgn "Rp" (`"Rp 150"`) tapi `submit_pasukan()` parsing tanpa hapus "Rp" → ValueError → skip karyawan.
+- ✅ Fix: simpan tarif tanpa "Rp" (`f"{tarif_normal:g}"`) + `.replace('Rp ','')` di parsing submit_pasukan.
+- ✅ Defense-in-depth untuk data lama.
+
+### Task F: Column misalignment di tabel default Gaji Karyawan
+- ✅ Root cause: `load_karyawan_data()` pakai col index 5-8, tapi seharusnya 7-10 (tambah 2 kolom baru: Menit Lembur & Tarif Lembur di posisi 5-6).
+- ✅ Fix: Col 5-6 diisi "0" (dulu tidak diisi); Col 7 ← Gaji Kotor; Col 8 ← Bon Lama; Col 9 ← Potong Kasbon; Col 10 ← Gaji Bersih.
+- ✅ Verifikasi semua fungsi rujuk col index yang sama (`submit_pasukan`, `submit_edit_karyawan`, `import_absensi_excel`, `recalc_pasukan`, `buka_editor_karyawan`).
+
+### Status Rules
+- ✅ Selesai
+- ❌ Belum dikerjakan
 
 ---
 
@@ -206,6 +244,7 @@ Lihat Rule 10.9 untuk panduan penulisan.
 4. ✅ Session 5 (2026-06-24): Bug-fixed catatan_harian↔hutang↔profit flow; fixed StockView helper.
 5. ✅ Session 6 (2026-06-25): Fitur Search Global & Tombol Hapus di Catatan Harian.
 6. ✅ Session 7 (2026-06-26): Font PDF Courier→Helvetica; Profit tanggal kain acuan dari Hutang; Anti-duplicate payroll; Auto-sinkron Data Manager→semua menu; Fix edit/hapus Pengeluaran Offline.
+7. ✅ Session 8 (2026-06-27): Excel Importer (import SKU + Tarif dari Excel); Dashboard Profit hanya tampilkan batch Full Cut.
 
 No historical "TODO" / "ada bug" lines should remain in code unless explicitly
 re-opened by the user.

@@ -18,7 +18,7 @@ from data.models import Person, SkuMaster
 from data.models.salary import SalaryRun, SalaryLineItem, MasterTarifPenjahit, PengsupReconciliation
 from data.models.master import TarifMaster
 from data.models.bon import BonBalance, BonMovement
-from utils.pdf_engine import generate_salary_slip
+from utils.pdf_engine import generate_salary_slip, generate_batch_karyawan_slip
 from PySide6.QtCore import QThread, Signal
 import os
 
@@ -462,6 +462,8 @@ class GajiView(QWidget):
         self.table_edit_harian.setHorizontalHeaderLabels(["Tanggal", "Jam Masuk", "Jam Keluar", "Menit Normal", "Menit Lembur"])
         self.table_edit_harian.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         self.table_edit_harian.setAlternatingRowColors(True)
+        # Override: enable edit via double-click khusus tabel edit absensi
+        self.table_edit_harian.setEditTriggers(QAbstractItemView.EditTrigger.DoubleClicked)
         lay.addWidget(QLabel("Rincian Absensi Harian (Format Jam -> HH:MM):"))
         lay.addWidget(self.table_edit_harian)
         
@@ -1234,36 +1236,42 @@ class GajiView(QWidget):
             item_nama.setFlags(item_nama.flags() & ~Qt.ItemFlag.ItemIsEditable) # Kunci kolom nama
             self.table_pasukan.setItem(i, 1, item_nama)
 
-            # Kolom Input: Default 0
+            # Kolom Input: Default 0 (Hadir, Menit Normal, Tarif Normal)
             for col in [2, 3, 4]:
                 item_input = QTableWidgetItem("0")
                 item_input.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
                 self.table_pasukan.setItem(i, col, item_input)
 
-            # Kolom Otomatis: Gaji Kotor
+            # Menit Lembur (col 5) & Tarif Lembur (col 6) — default 0
+            for col in [5, 6]:
+                item_lembur = QTableWidgetItem("0")
+                item_lembur.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                self.table_pasukan.setItem(i, col, item_lembur)
+
+            # Kolom Otomatis: Gaji Kotor (col 7)
             item_kotor = QTableWidgetItem("Rp 0")
             item_kotor.setFlags(item_kotor.flags() & ~Qt.ItemFlag.ItemIsEditable)
-            self.table_pasukan.setItem(i, 5, item_kotor)
+            self.table_pasukan.setItem(i, 7, item_kotor)
 
-            # Kolom Info Kasbon
+            # Kolom Info Kasbon (col 8)
             balance = self.db.query(BonBalance).filter(BonBalance.person_id == k.id).first()
             bon_lama = balance.saldo if balance else 0
             item_bon = QTableWidgetItem(f"Rp {bon_lama:,.0f}")
             item_bon.setForeground(Qt.GlobalColor.magenta)
             item_bon.setFlags(item_bon.flags() & ~Qt.ItemFlag.ItemIsEditable)
-            self.table_pasukan.setItem(i, 6, item_bon)
+            self.table_pasukan.setItem(i, 8, item_bon)
 
-            # Kolom Input: Potong Bon
+            # Kolom Input: Potong Bon (col 9)
             item_potong = QTableWidgetItem("0")
             item_potong.setForeground(Qt.GlobalColor.red)
             item_potong.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-            self.table_pasukan.setItem(i, 7, item_potong)
+            self.table_pasukan.setItem(i, 9, item_potong)
 
-            # Kolom Otomatis: Gaji Bersih
+            # Kolom Otomatis: Gaji Bersih (col 10)
             item_bersih = QTableWidgetItem("Rp 0")
             item_bersih.setForeground(Qt.GlobalColor.cyan)
             item_bersih.setFlags(item_bersih.flags() & ~Qt.ItemFlag.ItemIsEditable)
-            self.table_pasukan.setItem(i, 8, item_bersih)
+            self.table_pasukan.setItem(i, 10, item_bersih)
 
     def import_absensi_excel(self):
         """Import Excel Mesin Fingerprint + Scanning Spasial + Autopilot Kasbon & Tarif Dinamis"""
@@ -1501,8 +1509,8 @@ class GajiView(QWidget):
                     mnt_lembur = float(txt_lembur.replace(',', '')) if txt_lembur else 0.0
                     
                     # Konversi nilai tarif dinamis per baris karyawan
-                    trf_normal_aktual = float(txt_trf_normal.replace(',', '')) if txt_trf_normal else 0.0
-                    trf_lembur_aktual = float(txt_trf_lembur.replace(',', '')) if txt_trf_lembur else 0.0
+                    trf_normal_aktual = float(txt_trf_normal.replace('Rp ', '').replace(',', '').strip()) if txt_trf_normal else 0.0
+                    trf_lembur_aktual = float(txt_trf_lembur.replace('Rp ', '').replace(',', '').strip()) if txt_trf_lembur else 0.0
 
                     if mnt_normal == 0 and mnt_lembur == 0:
                         continue
@@ -1613,16 +1621,17 @@ class GajiView(QWidget):
             self.db.commit()
             if hasattr(self, 'notifier') and self.notifier:
                 self.notifier.database_changed.emit()
-                
+
             if run_ids_to_print:
-                # Triger pencetakan massal PDF
-                for s_id in run_ids_to_print:
-                    generate_salary_slip(s_id)
-                
-                export_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "exports", "slips")
-                if os.path.exists(export_dir): os.startfile(export_dir)
-                QMessageBox.information(self, "Sukses!", f"{len(run_ids_to_print)} Slip Gaji Karyawan berhasil disimpan dengan tarif kustom dan PDF telah dibuat!")
-                self.load_karyawan_data() 
+                # Generate PDF gabungan untuk semua karyawan
+                pdf_path = generate_batch_karyawan_slip(run_ids_to_print, tanggal_str)
+
+                if pdf_path and os.path.exists(pdf_path):
+                    os.startfile(pdf_path)
+                    QMessageBox.information(self, "Sukses!", f"{len(run_ids_to_print)} Slip Gaji Karyawan berhasil disimpan dalam 1 file PDF gabungan!")
+                else:
+                    QMessageBox.warning(self, "PDF Error", "Data tersimpan, tapi PDF gabungan gagal dibuat.")
+                self.load_karyawan_data()
                 self.recalc_pasukan()
             else:
                 QMessageBox.warning(self, "Kosong", "Tidak ada data gaji karyawan yang valid untuk diproses.")
@@ -1859,9 +1868,10 @@ class GajiView(QWidget):
         # Update Teks Sel di Layar Utama
         self.table_pasukan.item(row, 2).setText(str(total_hadir))
         self.table_pasukan.item(row, 3).setText(str(total_menit_normal))
-        self.table_pasukan.item(row, 4).setText(f"Rp {tarif_normal:,.0f}")
+        # Kolom 4 & 6: simpan ANGKA SAJA (tanpa "Rp") agar kompatibel dgn submit_pasukan
+        self.table_pasukan.item(row, 4).setText(f"{tarif_normal:g}")
         self.table_pasukan.item(row, 5).setText(str(total_menit_lembur))
-        self.table_pasukan.item(row, 6).setText(f"Rp {tarif_lembur:,.0f}")
+        self.table_pasukan.item(row, 6).setText(f"{tarif_lembur:g}")
         self.table_pasukan.item(row, 7).setText(f"Rp {gaji_kotor:,.0f}")
         self.table_pasukan.item(row, 9).setText(f"Rp {potong_kasbon:,.0f}")
         self.table_pasukan.item(row, 10).setText(f"Rp {gaji_bersih:,.0f}")

@@ -3,7 +3,7 @@
 from .base import Base
 from .sku import SkuMaster
 from .person import Person
-from .master import GarapanRate, AppSetting
+from .master import GarapanRate, TarifMaster, AppSetting
 from .catatan_harian import HasilCutting, DistribusiCutting, ModalOperasional, PengeluaranOffline
 from .debt import DebtEntry, DebtPayment
 from .bon import BonBalance, BonMovement

@@ -85,17 +85,28 @@ def get_akumulasi_gaji_karyawan(session, tgl_mulai: str, tgl_akhir: str) -> floa
 def get_profit_produksi(session, tgl_mulai: str, tgl_akhir: str) -> float:
     """SUM total_profit dari profit_history dalam rentang tanggal_hitung.
 
-    Sesuai SQL referensi CLAUDE.md:
-        SELECT SUM(total_profit) FROM profit_history
-        WHERE tanggal_hitung BETWEEN :mulai AND :akhir
+    Hanya batch yang sudah FULL CUT (debt_entries.status_cutting = 'SELESAI')
+    yang dihitung di Dashboard. Batch tanpa debt_entry_id (tidak terikat kain)
+    tetap dihitung (mis. biaya produksi umum).
 
-    Baris profit_history ditulis oleh ProfitSimulationView.save_profit_history()
-    (upsert per batch via debt_entry_id), jadi tiap batch hanya dihitung sekali.
+    Referensi query:
+        SELECT SUM(ph.total_profit)
+        FROM profit_history ph
+        LEFT JOIN debt_entries de ON ph.debt_entry_id = de.id
+        WHERE ph.tanggal_hitung BETWEEN :mulai AND :akhir
+          AND (de.status_cutting = 'SELESAI' OR ph.debt_entry_id IS NULL)
+
+    Tombol FULL CUT ada di menu Profit Simulation (toggle_status_kain).
     """
     return float(
         (
             session.query(func.coalesce(func.sum(ProfitHistory.total_profit), 0.0))
+            .outerjoin(DebtEntry, ProfitHistory.debt_entry_id == DebtEntry.id)
             .filter(ProfitHistory.tanggal_hitung.between(tgl_mulai, tgl_akhir))
+            .filter(
+                (DebtEntry.status_cutting == "SELESAI")
+                | (ProfitHistory.debt_entry_id.is_(None))
+            )
             .scalar()
         )
         or 0.0

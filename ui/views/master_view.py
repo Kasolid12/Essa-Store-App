@@ -10,6 +10,9 @@ from ui.components.buttons import CyberButton
 from ui.theme import Theme
 from data.database import SessionLocal
 from data.models import SkuMaster, Person
+from data.excel_importer import import_sku_from_excel, import_tarif_from_excel
+
+from PySide6.QtWidgets import QFileDialog, QTextEdit
 
 class MasterDataView(QWidget):
     def __init__(self, notifier=None):
@@ -59,7 +62,8 @@ class MasterDataView(QWidget):
         
         self.setup_sku_tab()
         self.setup_person_tab()
-        
+        self.setup_import_tab()
+
         layout.addWidget(self.tabs)
 
     # ==========================================
@@ -312,6 +316,153 @@ class MasterDataView(QWidget):
         self.btn_save_person.setText("SIMPAN BARU")
         self.btn_delete_person.setEnabled(False) # Disable Delete button
         self.table_person.clearSelection()
+
+    # ==========================================
+    # 3. IMPORT EXCEL TAB SETUP
+    # ==========================================
+    def setup_import_tab(self):
+        self.tab_import = QWidget()
+        lay_import = QVBoxLayout(self.tab_import)
+        lay_import.setSpacing(20)
+
+        # --- Section: Import SKU ---
+        sku_frame = QFrame()
+        sku_frame.setObjectName("GridPanel")
+        sku_lay = QVBoxLayout(sku_frame)
+        sku_lay.addWidget(QLabel("IMPORT MASTER SKU", styleSheet=f"color: {Theme.NEON_CYAN}; font-weight: bold; font-size: 12pt;"))
+        sku_lay.addWidget(QLabel("Format: MasterSKU.xlsx (Sheet: 'Master SKU') — Kolom: Nomor SKU, Judul, Rata-Rata Modal Bobot", styleSheet=f"color: {Theme.TEXT_MUTED};"))
+
+        sku_file_row = QHBoxLayout()
+        self.lbl_sku_file = QLabel("Belum pilih file...")
+        self.lbl_sku_file.setStyleSheet(f"color: {Theme.TEXT_MUTED}; padding: 6px; border: 1px solid {Theme.BORDER_DIM};")
+        sku_file_row.addWidget(self.lbl_sku_file, stretch=1)
+        btn_sku_browse = CyberButton("CARI FILE")
+        btn_sku_browse.clicked.connect(self.browse_sku_file)
+        sku_file_row.addWidget(btn_sku_browse)
+        sku_lay.addLayout(sku_file_row)
+
+        sku_btn_row = QHBoxLayout()
+        self.btn_import_sku = CyberButton("MULAI IMPORT SKU")
+        self.btn_import_sku.clicked.connect(self.run_import_sku)
+        self.btn_import_sku.setEnabled(False)
+        sku_btn_row.addWidget(self.btn_import_sku)
+        sku_btn_row.addStretch()
+        sku_lay.addLayout(sku_btn_row)
+
+        self.lbl_sku_result = QLabel("")
+        self.lbl_sku_result.setWordWrap(True)
+        sku_lay.addWidget(self.lbl_sku_result)
+        lay_import.addWidget(sku_frame)
+
+        # --- Section: Import Tarif ---
+        tarif_frame = QFrame()
+        tarif_frame.setObjectName("GridPanel")
+        tarif_lay = QVBoxLayout(tarif_frame)
+        tarif_lay.addWidget(QLabel("IMPORT MASTER TARIF", styleSheet=f"color: {Theme.NEON_CYAN}; font-weight: bold; font-size: 12pt;"))
+        tarif_lay.addWidget(QLabel("Format: Master_tarif.xlsx — Sheet 'SKU_Pengsup' (Kain, Potongan) + 'SKU_Penjahit' (Harga Satuan)", styleSheet=f"color: {Theme.TEXT_MUTED};"))
+
+        tarif_file_row = QHBoxLayout()
+        self.lbl_tarif_file = QLabel("Belum pilih file...")
+        self.lbl_tarif_file.setStyleSheet(f"color: {Theme.TEXT_MUTED}; padding: 6px; border: 1px solid {Theme.BORDER_DIM};")
+        tarif_file_row.addWidget(self.lbl_tarif_file, stretch=1)
+        btn_tarif_browse = CyberButton("CARI FILE")
+        btn_tarif_browse.clicked.connect(self.browse_tarif_file)
+        tarif_file_row.addWidget(btn_tarif_browse)
+        tarif_lay.addLayout(tarif_file_row)
+
+        tarif_btn_row = QHBoxLayout()
+        self.btn_import_tarif = CyberButton("MULAI IMPORT TARIF")
+        self.btn_import_tarif.clicked.connect(self.run_import_tarif)
+        self.btn_import_tarif.setEnabled(False)
+        tarif_btn_row.addWidget(self.btn_import_tarif)
+        tarif_btn_row.addStretch()
+        tarif_lay.addLayout(tarif_btn_row)
+
+        self.lbl_tarif_result = QLabel("")
+        self.lbl_tarif_result.setWordWrap(True)
+        tarif_lay.addWidget(self.lbl_tarif_result)
+        lay_import.addWidget(tarif_frame)
+
+        # --- Error Log ---
+        log_frame = QFrame()
+        log_frame.setObjectName("GridPanel")
+        log_lay = QVBoxLayout(log_frame)
+        log_lay.addWidget(QLabel("LOG ERROR", styleSheet=f"color: {Theme.NEON_PINK}; font-weight: bold;"))
+        self.log_errors = QTextEdit()
+        self.log_errors.setReadOnly(True)
+        self.log_errors.setMaximumHeight(150)
+        self.log_errors.setStyleSheet(f"background-color: {Theme.BG_VOID}; color: #ff5252; border: 1px solid {Theme.BORDER_DIM};")
+        log_lay.addWidget(self.log_errors)
+        lay_import.addWidget(log_frame)
+
+        lay_import.addStretch()
+        self.tabs.addTab(self.tab_import, "IMPORT EXCEL")
+
+    # ==========================================
+    # IMPORT HANDLERS
+    # ==========================================
+    def browse_sku_file(self):
+        path, _ = QFileDialog.getOpenFileName(self, "Pilih file Master SKU", "", "Excel Files (*.xlsx *.xls)")
+        if path:
+            self.sku_filepath = path
+            self.lbl_sku_file.setText(path)
+            self.lbl_sku_file.setStyleSheet(f"color: {Theme.TEXT_MAIN}; padding: 6px; border: 1px solid {Theme.BORDER_DIM};")
+            self.btn_import_sku.setEnabled(True)
+            self.lbl_sku_result.setText("")
+
+    def browse_tarif_file(self):
+        path, _ = QFileDialog.getOpenFileName(self, "Pilih file Master Tarif", "", "Excel Files (*.xlsx *.xls)")
+        if path:
+            self.tarif_filepath = path
+            self.lbl_tarif_file.setText(path)
+            self.lbl_tarif_file.setStyleSheet(f"color: {Theme.TEXT_MAIN}; padding: 6px; border: 1px solid {Theme.BORDER_DIM};")
+            self.btn_import_tarif.setEnabled(True)
+            self.lbl_tarif_result.setText("")
+
+    def run_import_sku(self):
+        if not hasattr(self, 'sku_filepath') or not self.sku_filepath:
+            return
+        self.btn_import_sku.setEnabled(False)
+        self.lbl_sku_result.setText("⏳ Mengimport data SKU...")
+        self.lbl_sku_result.setStyleSheet(f"color: {Theme.NEON_YELLOW};")
+        try:
+            stats = import_sku_from_excel(self.sku_filepath, self.db)
+            ok = stats["imported"]
+            skip = stats["skipped"]
+            errs = stats["errors"]
+            if errs:
+                self.log_errors.append("\n".join(errs))
+            self.lbl_sku_result.setText(f"✅ {ok} SKU berhasil diimport. {skip} baris dilewati.")
+            self.lbl_sku_result.setStyleSheet(f"color: {Theme.NEON_CYAN}; font-weight: bold;")
+            self.load_sku_data()
+            if self.notifier:
+                self.notifier.database_changed.emit()
+        except Exception as e:
+            self.lbl_sku_result.setText(f"❌ Gagal: {e}")
+            self.lbl_sku_result.setStyleSheet(f"color: {Theme.NEON_PINK};")
+        finally:
+            self.btn_import_sku.setEnabled(True)
+
+    def run_import_tarif(self):
+        if not hasattr(self, 'tarif_filepath') or not self.tarif_filepath:
+            return
+        self.btn_import_tarif.setEnabled(False)
+        self.lbl_tarif_result.setText("⏳ Mengimport data Tarif...")
+        self.lbl_tarif_result.setStyleSheet(f"color: {Theme.NEON_YELLOW};")
+        try:
+            stats = import_tarif_from_excel(self.tarif_filepath, self.db)
+            ok = stats["imported"]
+            skip = stats["skipped"]
+            errs = stats["errors"]
+            if errs:
+                self.log_errors.append("\n".join(errs))
+            self.lbl_tarif_result.setText(f"✅ {ok} Tarif berhasil diimport. {skip} baris dilewati.")
+            self.lbl_tarif_result.setStyleSheet(f"color: {Theme.NEON_CYAN}; font-weight: bold;")
+        except Exception as e:
+            self.lbl_tarif_result.setText(f"❌ Gagal: {e}")
+            self.lbl_tarif_result.setStyleSheet(f"color: {Theme.NEON_PINK};")
+        finally:
+            self.btn_import_tarif.setEnabled(True)
 
     def closeEvent(self, event):
         self.db.close()
