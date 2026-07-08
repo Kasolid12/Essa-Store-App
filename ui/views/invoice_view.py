@@ -2,334 +2,829 @@
 import os
 import datetime
 import traceback
+from sqlalchemy import func
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QFrame,
     QTableWidgetItem, QHeaderView, QMessageBox, QAbstractItemView,
-    QGridLayout, QLineEdit, QGroupBox, QFileDialog
+    QGridLayout, QLineEdit, QGroupBox, QComboBox,
+    QDateEdit
 )
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QDate
+from PySide6.QtGui import QColor
 
 from ui.components.tables import CyberTable
 from ui.components.buttons import CyberButton
 from ui.theme import Theme
 from data.database import SessionLocal
-from data.models import PengeluaranOffline
+from data.models import PengeluaranOffline, Person
+from data.models.invoice import ClientReceivable, ClientReceivablePayment
+from utils.pdf_engine import generate_invoice_pdf
+
 
 class InvoiceView(QWidget):
     def __init__(self, notifier=None):
         super().__init__()
         self.db = SessionLocal()
         self.notifier = notifier
+        self.selected_client_id = None
         self.selected_sales = []
         self.total_tagihan = 0.0
-        
+        self.total_tagihan_all = 0
+
         self.setup_ui()
-        self.load_sales_data()
+        self.load_clients()
         if self.notifier:
             self.notifier.database_changed.connect(self.refresh_harian_tables)
 
     def refresh_harian_tables(self):
-        """Menyegarkan seluruh grid tabel catatan harian jika ada perubahan data di menu lain"""
+        """Menyegarkan seluruh data jika ada perubahan di menu lain"""
         self.db.expire_all()
-        # Masukkan semua fungsi load data harian Anda di bawah ini
-        if hasattr(self, 'load_sales_data'): self.load_sales_data()
-    
+        self.load_clients()
+        if self.selected_client_id:
+            self.load_client_data(self.selected_client_id)
+
+    # ====================================================================
+    # SETUP UI
+    # ====================================================================
     def setup_ui(self):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        
-        # --- Page Header ---
-        header_layout = QHBoxLayout()
-        title = QLabel("INVOICE & PELUNASAN MULTI-TRANSAKSI")
-        title.setStyleSheet(f"font-size: 24pt; font-weight: bold; color: {Theme.NEON_CYAN};")
-        header_layout.addWidget(title)
-        header_layout.addStretch()
-        
-        btn_refresh = CyberButton("🔄 REFRESH DATA")
-        btn_refresh.clicked.connect(self.load_sales_data)
-        header_layout.addWidget(btn_refresh)
-        layout.addLayout(header_layout)
+        layout.setSpacing(8)
 
-        # --- Data Table ---
+        # --- HEADER ---
+        header = QHBoxLayout()
+        title = QLabel("INVOICE & PIUTANG")
+        title.setStyleSheet(f"font-size: 24pt; font-weight: bold; color: {Theme.NEON_CYAN};")
+        header.addWidget(title)
+        header.addStretch()
+        btn_refresh = CyberButton("REFRESH DATA")
+        btn_refresh.clicked.connect(lambda: self.refresh_harian_tables())
+        header.addWidget(btn_refresh)
+        layout.addLayout(header)
+
+        # --- CLIENT DROPDOWN ---
+        client_row = QHBoxLayout()
+        client_row.addWidget(QLabel("Pilih Klien:"))
+        self.cb_client = QComboBox()
+        self.cb_client.setMinimumWidth(300)
+        self.cb_client.setStyleSheet(
+            f"background-color: #15151a; color: {Theme.TEXT_MAIN};"
+            f" padding: 8px; border: 1px solid #2d2d38; border-radius: 4px;"
+        )
+        self.cb_client.currentIndexChanged.connect(self.on_client_selected)
+        client_row.addWidget(self.cb_client)
+        client_row.addStretch()
+        layout.addLayout(client_row)
+
+        # --- LABEL TABEL ---
+        info_label = QLabel(
+            "PILIH BARIS PENJUALAN (centang) untuk cetak invoice — "
+            "deposit diisi di bawah"
+        )
+        info_label.setStyleSheet(
+            f"color: {Theme.TEXT_MUTED}; font-weight: bold; margin-top: 6px;"
+        )
+        layout.addWidget(info_label)
+
+        # --- COMBINED TRANSACTION TABLE ---
         self.table = CyberTable()
         self.table.setColumnCount(7)
         self.table.setHorizontalHeaderLabels([
-            "ID Penjualan", "Tanggal", "Nama Pembeli", "Kode SKU", 
-            "Qty", "Harga Satuan", "Total Transaksi"
+            "ID", "Tanggal", "Keterangan",
+            "Debit (Rp)", "Kredit (Rp)", "Sisa (Rp)", "Status"
         ])
-        self.table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
-        
-        # MENGAKTIFKAN MULTI-SELECTION
+        self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
+        self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
         self.table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.table.itemSelectionChanged.connect(self.on_row_selected)
-        layout.addWidget(self.table)
+        layout.addWidget(self.table, stretch=1)
 
-        # --- PANEL KALKULASI & PEMBAYARAN ---
-        pay_group = QGroupBox("KALKULASI & PELUNASAN (DRAFT INVOICE)")
-        pay_group.setStyleSheet(f"""
-            QGroupBox {{ color: {Theme.NEON_YELLOW}; font-weight: bold; border: 1px solid #2d2d38; padding: 15px; margin-top: 10px; }}
-        """)
-        pay_lay = QGridLayout(pay_group)
+        # ====================================================================
+        # BOTTOM PANEL: SUMMARY + DEPOSIT + ACTIONS
+        # ====================================================================
+        bottom_frame = QFrame()
+        bottom_frame.setObjectName("GridPanel")
+        bottom_lay = QVBoxLayout(bottom_frame)
+        bottom_lay.setSpacing(8)
 
-        # Kolom Kiri
-        pay_lay.addWidget(QLabel("Klien Terpilih:"), 0, 0)
-        self.lbl_klien = QLabel("-")
-        self.lbl_klien.setStyleSheet("font-size: 14pt; font-weight: bold; color: white;")
-        pay_lay.addWidget(self.lbl_klien, 0, 1)
+        # --- RINGKASAN PIUTANG (2 baris grid) ---
+        sum_grid = QGridLayout()
+        sum_grid.setSpacing(10)
 
-        pay_lay.addWidget(QLabel("Total Tagihan Terpilih:"), 1, 0)
-        self.lbl_total = QLabel("Rp 0")
-        self.lbl_total.setStyleSheet(f"font-size: 16pt; font-weight: bold; color: {Theme.NEON_PINK};")
-        pay_lay.addWidget(self.lbl_total, 1, 1)
+        # Baris 0
+        sum_grid.addWidget(QLabel("Total Tagihan:"), 0, 0)
+        self.lbl_total_tagihan = QLabel("Rp 0")
+        self.lbl_total_tagihan.setStyleSheet(
+            f"font-size: 14pt; font-weight: bold; color: {Theme.NEON_PINK};"
+        )
+        sum_grid.addWidget(self.lbl_total_tagihan, 0, 1)
 
-        # Kolom Tengah (Pembayaran)
-        pay_lay.addWidget(QLabel("DIBAYAR SAAT INI (Rp):"), 0, 2, alignment=Qt.AlignmentFlag.AlignRight)
-        self.ent_dibayar = QLineEdit("0")
-        self.ent_dibayar.setStyleSheet(f"font-size: 14pt; font-weight: bold; background: {Theme.BG_VOID}; color: {Theme.TEXT_MAIN};")
-        self.ent_dibayar.textChanged.connect(self.kalkulasi_sisa)
-        pay_lay.addWidget(self.ent_dibayar, 0, 3)
+        sum_grid.addWidget(QLabel("Total Dibayar:"), 0, 2)
+        self.lbl_total_bayar = QLabel("Rp 0")
+        self.lbl_total_bayar.setStyleSheet(
+            "font-size: 14pt; font-weight: bold; color: #4CAF50;"
+        )
+        sum_grid.addWidget(self.lbl_total_bayar, 0, 3)
 
-        pay_lay.addWidget(QLabel("SISA HUTANG BARU:"), 1, 2, alignment=Qt.AlignmentFlag.AlignRight)
+        # Baris 1
+        sum_grid.addWidget(QLabel("Sisa Piutang:"), 1, 0)
         self.lbl_sisa = QLabel("Rp 0")
-        self.lbl_sisa.setStyleSheet("font-size: 16pt; font-weight: bold; color: #4CAF50;")
-        pay_lay.addWidget(self.lbl_sisa, 1, 3)
+        self.lbl_sisa.setStyleSheet(
+            "font-size: 16pt; font-weight: bold; color: #F44336;"
+        )
+        sum_grid.addWidget(self.lbl_sisa, 1, 1)
 
-        # Kolom Kanan (Tombol Aksi)
-        self.btn_print = CyberButton("🖨️ CETAK INVOICE PDF")
-        self.btn_print.setStyleSheet(f"background-color: {Theme.NEON_CYAN}; color: black; font-weight: bold; font-size: 11pt; padding: 10px;")
+        sum_grid.addWidget(QLabel("Status:"), 1, 2)
+        self.lbl_status = QLabel("-")
+        self.lbl_status.setStyleSheet(
+            "font-size: 14pt; font-weight: bold; color: #9E9E9E;"
+        )
+        sum_grid.addWidget(self.lbl_status, 1, 3)
+
+        bottom_lay.addLayout(sum_grid)
+
+        # Separator
+        sep = QFrame()
+        sep.setFrameShape(QFrame.Shape.HLine)
+        sep.setStyleSheet("background-color: #2d2d38;")
+        bottom_lay.addWidget(sep)
+
+        # --- DEPOSIT + ACTION ROW ---
+        deposit_row = QHBoxLayout()
+        deposit_row.setSpacing(10)
+        deposit_row.addWidget(QLabel("Deposit (Rp):"))
+        self.ent_deposit = QLineEdit("0")
+        self.ent_deposit.setStyleSheet(
+            f"font-size: 14pt; font-weight: bold; background: {Theme.BG_VOID};"
+            f" color: {Theme.TEXT_MAIN}; padding: 4px;"
+        )
+        self.ent_deposit.setMaximumWidth(150)
+        deposit_row.addWidget(self.ent_deposit)
+
+        deposit_row.addWidget(QLabel("Tgl:"))
+        self.date_deposit = QDateEdit()
+        self.date_deposit.setDate(QDate.currentDate())
+        self.date_deposit.setCalendarPopup(True)
+        self.date_deposit.setStyleSheet(
+            f"background: {Theme.BG_VOID}; color: {Theme.TEXT_MAIN}; padding: 4px;"
+        )
+        deposit_row.addWidget(self.date_deposit)
+
+        deposit_row.addWidget(QLabel("Metode:"))
+        self.cb_metode = QComboBox()
+        self.cb_metode.addItems(["TUNAI", "TRANSFER"])
+        self.cb_metode.setStyleSheet(
+            f"background: #15151a; color: {Theme.TEXT_MAIN}; padding: 4px;"
+        )
+        deposit_row.addWidget(self.cb_metode)
+
+        deposit_row.addStretch()
+
+        self.btn_print = CyberButton("CETAK INVOICE PDF")
+        self.btn_print.setStyleSheet(
+            f"background-color: {Theme.NEON_CYAN}; color: black;"
+            f" font-weight: bold; font-size: 11pt; padding: 10px;"
+        )
         self.btn_print.setEnabled(False)
-        self.btn_print.clicked.connect(self.print_multi_invoice)
-        pay_lay.addWidget(self.btn_print, 0, 4, 2, 1)
+        self.btn_print.clicked.connect(self._save_and_print)
+        deposit_row.addWidget(self.btn_print)
 
-        self.btn_export = CyberButton("📊 EXPORT EXCEL")
-        self.btn_export.setStyleSheet(f"background-color: #FFC107; color: black; font-weight: bold; font-size: 11pt; padding: 10px;")
-        self.btn_export.setEnabled(False)
-        self.btn_export.clicked.connect(self.export_to_excel)
-        pay_lay.addWidget(self.btn_export, 0, 5, 2, 1)
+        self.btn_hapus_payment = CyberButton("HAPUS PEMBAYARAN")
+        self.btn_hapus_payment.setStyleSheet(
+            f"background-color: {Theme.NEON_PINK}; color: white;"
+            f" font-weight: bold; font-size: 11pt; padding: 10px;"
+        )
+        self.btn_hapus_payment.setEnabled(False)
+        self.btn_hapus_payment.clicked.connect(self.delete_selected_payment)
+        deposit_row.addWidget(self.btn_hapus_payment)
 
-        layout.addWidget(pay_group)
+        bottom_lay.addLayout(deposit_row)
+        layout.addWidget(bottom_frame)
 
-    def load_sales_data(self):
+    # ====================================================================
+    # LOAD CLIENTS
+    # ====================================================================
+    def load_clients(self):
+        """Muat daftar klien yang memiliki transaksi offline atau piutang."""
+        prev_id = self.selected_client_id
+
+        self.cb_client.blockSignals(True)
+        self.cb_client.clear()
+        self.cb_client.addItem("-- Pilih Klien --", None)
+
+        person_ids = (
+            self.db.query(PengeluaranOffline.person_id)
+            .filter(PengeluaranOffline.is_deleted == 0)
+            .filter(PengeluaranOffline.person_id.isnot(None))
+            .distinct()
+            .all()
+        )
+        ids_from_sales = {r[0] for r in person_ids if r[0]}
+
+        cr_ids = (
+            self.db.query(ClientReceivable.person_id)
+            .filter(ClientReceivable.person_id.isnot(None))
+            .distinct()
+            .all()
+        )
+        ids_from_cr = {r[0] for r in cr_ids if r[0]}
+
+        all_ids = ids_from_sales | ids_from_cr
+        persons = (
+            self.db.query(Person)
+            .filter(Person.id.in_(all_ids))
+            .order_by(Person.nama)
+            .all()
+        ) if all_ids else []
+
+        for p in persons:
+            self.cb_client.addItem(p.nama, p.id)
+
+        self.cb_client.blockSignals(False)
+
+        if prev_id:
+            idx = self.cb_client.findData(prev_id)
+            if idx >= 0:
+                self.cb_client.setCurrentIndex(idx)
+                return
+
+        if self.cb_client.count() > 1:
+            self.cb_client.setCurrentIndex(1)
+
+    # ====================================================================
+    # CLIENT SELECTION
+    # ====================================================================
+    def on_client_selected(self, idx=None):
+        """Dipanggil saat user memilih klien dari dropdown."""
+        self.selected_client_id = self.cb_client.currentData()
+        if not self.selected_client_id:
+            self.reset_all()
+            return
+        self.load_client_data(self.selected_client_id)
+
+    def load_client_data(self, person_id):
+        """Muat kombinasi tabel + summary untuk satu klien."""
+        self.selected_client_id = person_id
+        # Self-healing: recalculate receivable dari data nyata setiap load
+        self._recalculate_receivable(person_id)
+        self.load_combined_table(person_id)
+        self.load_summary(person_id)
+        # Set deposit default, reset selection
+        self.ent_deposit.setText("0")
+        self.date_deposit.setDate(QDate.currentDate())
+        self.selected_sales = []
+
+    # ====================================================================
+    # COMBINED TRANSACTION TABLE (penjualan + pembayaran)
+    # ====================================================================
+    def load_combined_table(self, person_id):
+        """Satu tabel penjualan + pembayaran dengan running balance & status FIFO."""
         self.table.setRowCount(0)
-        sales = self.db.query(PengeluaranOffline).filter(PengeluaranOffline.person_id != None).order_by(PengeluaranOffline.tanggal.desc(), PengeluaranOffline.id.desc()).limit(150).all()
-        
-        self.table.setRowCount(len(sales))
-        for row, sale in enumerate(sales):
-            self.table.setItem(row, 0, QTableWidgetItem(str(sale.id)))
-            self.table.setItem(row, 1, QTableWidgetItem(sale.tanggal))
-            self.table.setItem(row, 2, QTableWidgetItem(sale.person.nama if sale.person else "Unknown"))
-            
-            # --- PERBAIKAN: Menampilkan KODE SKU di UI Tabel ---
-            self.table.setItem(row, 3, QTableWidgetItem(sale.sku.kode_sku if sale.sku else "Unknown"))
-            # ---------------------------------------------------
-            
-            qty_item = QTableWidgetItem(f"{sale.qty:,}")
-            qty_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-            self.table.setItem(row, 4, qty_item)
-            
-            harga_item = QTableWidgetItem(f"Rp {sale.harga_satuan:,.0f}")
-            harga_item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-            self.table.setItem(row, 5, harga_item)
-            
-            total_item = QTableWidgetItem(f"Rp {sale.total:,.0f}")
-            total_item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-            total_item.setForeground(Qt.GlobalColor.green)
-            self.table.setItem(row, 6, total_item)
-
-    def on_row_selected(self):
-        selected_rows = list(set([item.row() for item in self.table.selectedItems()]))
-        
-        if not selected_rows:
-            self.reset_panel()
+        rows = self._get_combined_rows(person_id)
+        if not rows:
             return
 
-        nama_klien_pertama = self.table.item(selected_rows[0], 2).text()
-        
-        for row in selected_rows:
-            nama_cek = self.table.item(row, 2).text()
-            if nama_cek != nama_klien_pertama:
-                QMessageBox.warning(self, "Pilihan Tidak Valid", "Anda hanya bisa memilih banyak transaksi untuk 1 Klien yang sama!")
-                self.table.clearSelection()
-                self.reset_panel()
-                return
+        # Komputasi status FIFO: pembayaran diterapkan ke penjualan terlama dulu
+        # Antrian = list of {idx, sisa_belum_dibayar}
+        fifo_queue = []
+
+        for i, r in enumerate(rows):
+            if r["jenis"] == "Penjualan":
+                fifo_queue.append({"idx": i, "sisa": r["debit"]})
+                r["status"] = "BELUM LUNAS"
+            else:  # Pembayaran
+                sisa_bayar = r["credit"]
+                while sisa_bayar > 0 and fifo_queue:
+                    oldest = fifo_queue[0]
+                    if sisa_bayar >= oldest["sisa"]:
+                        # Penjualan ini LUNAS
+                        sisa_bayar -= oldest["sisa"]
+                        rows[oldest["idx"]]["status"] = "LUNAS"
+                        fifo_queue.pop(0)
+                    else:
+                        # Penjualan ini PARTIAL (dibayar sebagian)
+                        oldest["sisa"] -= sisa_bayar
+                        rows[oldest["idx"]]["status"] = "PARTIAL"
+                        sisa_bayar = 0
+                r["status"] = "LUNAS"
+
+        # Populasi tabel
+        running = 0.0
+        self.table.setRowCount(len(rows))
+        for i, r in enumerate(rows):
+            running += r["debit"] - r["credit"]
+
+            # Kolom 0: ID transaksi (internal)
+            id_item = QTableWidgetItem(str(r.get("id", "")))
+            id_item.setData(Qt.ItemDataRole.UserRole, r.get("id"))
+            self.table.setItem(i, 0, id_item)
+
+            # Kolom 1: Tanggal
+            self.table.setItem(i, 1, QTableWidgetItem(r["tanggal"]))
+
+            # Kolom 2: Keterangan
+            self.table.setItem(i, 2, QTableWidgetItem(r["keterangan"]))
+
+            # Kolom 3: Debit (tagihan)
+            debit_text = f"Rp {r['debit']:,.0f}" if r['debit'] > 0 else "-"
+            debit_item = QTableWidgetItem(debit_text)
+            debit_item.setTextAlignment(
+                Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+            )
+            if r['jenis'] == "Penjualan":
+                debit_item.setForeground(QColor(Theme.NEON_PINK))
+            self.table.setItem(i, 3, debit_item)
+
+            # Kolom 4: Kredit (pembayaran)
+            kredit_text = f"Rp {r['credit']:,.0f}" if r['credit'] > 0 else "-"
+            kredit_item = QTableWidgetItem(kredit_text)
+            kredit_item.setTextAlignment(
+                Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+            )
+            if r['credit'] > 0:
+                kredit_item.setForeground(QColor("#4CAF50"))
+            self.table.setItem(i, 4, kredit_item)
+
+            # Kolom 5: Sisa (running balance)
+            sisa_item = QTableWidgetItem(f"Rp {running:,.0f}")
+            sisa_item.setTextAlignment(
+                Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+            )
+            sisa_item.setForeground(
+                QColor("#4CAF50") if running <= 0 else QColor("#F44336")
+            )
+            self.table.setItem(i, 5, sisa_item)
+
+            # Kolom 6: Status (LUNAS/PARTIAL/BELUM LUNAS)
+            status_item = QTableWidgetItem(r["status"])
+            status_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            if r["status"] == "LUNAS":
+                status_item.setForeground(QColor("#4CAF50"))
+            elif r["status"] == "PARTIAL":
+                status_item.setForeground(QColor("#FFC107"))
+            else:
+                status_item.setForeground(QColor("#F44336"))
+            self.table.setItem(i, 6, status_item)
+
+    def _get_combined_rows(self, person_id):
+        """Query + sort penjualan & pembayaran jadi list of dict."""
+        rows = []
+
+        # Penjualan offline
+        sales = (
+            self.db.query(PengeluaranOffline)
+            .filter(PengeluaranOffline.person_id == person_id)
+            .filter(PengeluaranOffline.is_deleted == 0)
+            .order_by(PengeluaranOffline.tanggal, PengeluaranOffline.id)
+            .all()
+        )
+        for s in sales:
+            sku = s.sku.kode_sku if s.sku else "-"
+            rows.append({
+                "id": f"S{s.id}",
+                "sort_key": (s.tanggal, 0, s.id),
+                "tanggal": s.tanggal,
+                "jenis": "Penjualan",
+                "keterangan": f"{sku} x{s.qty}  |  {s.person.nama if s.person else ''}",
+                "debit": float(s.total),
+                "credit": 0.0,
+            })
+
+        # Pembayaran
+        receivable = (
+            self.db.query(ClientReceivable)
+            .filter(ClientReceivable.person_id == person_id)
+            .first()
+        )
+        if receivable:
+            payments = (
+                self.db.query(ClientReceivablePayment)
+                .filter(ClientReceivablePayment.receivable_id == receivable.id)
+                .order_by(ClientReceivablePayment.tanggal_bayar, ClientReceivablePayment.id)
+                .all()
+            )
+            for p in payments:
+                rows.append({
+                    "id": f"P{p.id}",
+                    "sort_key": (p.tanggal_bayar, 1, p.id),
+                    "tanggal": p.tanggal_bayar,
+                    "jenis": "Pembayaran",
+                    "keterangan": f"Deposit ({p.metode})",
+                    "debit": 0.0,
+                    "credit": float(p.nominal_bayar),
+                })
+
+        # Sort by (tanggal, jenis=0 Penjualan dulu, 1 Pembayaran, id)
+        rows.sort(key=lambda r: r["sort_key"])
+        return rows
+
+    # ====================================================================
+    # SUMMARY
+    # ====================================================================
+    def load_summary(self, person_id):
+        """Hitung ringkasan piutang."""
+        total_all = (
+            self.db.query(func.coalesce(func.sum(PengeluaranOffline.total), 0.0))
+            .filter(PengeluaranOffline.person_id == person_id)
+            .filter(PengeluaranOffline.is_deleted == 0)
+            .scalar()
+        ) or 0.0
+        self.total_tagihan_all = total_all  # simpan buat fallback
+
+        receivable = (
+            self.db.query(ClientReceivable)
+            .filter(ClientReceivable.person_id == person_id)
+            .first()
+        )
+
+        total_bayar = 0.0
+        sisa = 0.0
+
+        if receivable:
+            total_bayar = max(0.0, receivable.nominal - receivable.sisa)
+            sisa = receivable.sisa
+        else:
+            sisa = total_all
+
+        self.lbl_total_tagihan.setText(f"Rp {total_all:,.0f}")
+        self.lbl_total_bayar.setText(f"Rp {total_bayar:,.0f}")
+        self.lbl_sisa.setText(f"Rp {max(0, sisa):,.0f}")
+
+        if sisa <= 0:
+            self.lbl_status.setText("LUNAS")
+            self.lbl_status.setStyleSheet(
+                "font-size: 14pt; font-weight: bold; color: #4CAF50;"
+            )
+            self.lbl_sisa.setStyleSheet(
+                "font-size: 16pt; font-weight: bold; color: #4CAF50;"
+            )
+        else:
+            self.lbl_status.setText("BELUM LUNAS")
+            self.lbl_status.setStyleSheet(
+                "font-size: 14pt; font-weight: bold; color: #F44336;"
+            )
+            self.lbl_sisa.setStyleSheet(
+                "font-size: 16pt; font-weight: bold; color: #F44336;"
+            )
+
+    # ====================================================================
+    # SELECTION — hanya hitung PENJUALAN yang dipilih
+    # ====================================================================
+    def on_row_selected(self):
+        """Saat baris dipilih — hanya hitung penjualan untuk cetak invoice."""
+        if not self.selected_client_id:
+            self._disable_actions()
+            return
+
+        selected_rows = set()
+        for item in self.table.selectedItems():
+            selected_rows.add(item.row())
 
         self.selected_sales = []
         self.total_tagihan = 0.0
-        
+        has_payment = False
+
         for row in selected_rows:
-            sale_id = int(self.table.item(row, 0).text())
-            total_str = self.table.item(row, 6).text().replace("Rp ", "").replace(",", "")
-            self.selected_sales.append(sale_id)
-            self.total_tagihan += float(total_str)
+            jenis_item = self.table.item(row, 2)
+            if not jenis_item:
+                continue
 
-        self.lbl_klien.setText(nama_klien_pertama)
-        self.lbl_total.setText(f"Rp {self.total_tagihan:,.0f}")
-        self.btn_print.setEnabled(True)
-        self.btn_export.setEnabled(True)
-        self.kalkulasi_sisa()
+            row_id = self.table.item(row, 0).text() if self.table.item(row, 0) else ""
 
+            # Deteksi baris pembayaran (untuk tombol hapus)
+            if row_id.startswith("P"):
+                has_payment = True
+                continue
+
+            debit_str = self.table.item(row, 3).text() if self.table.item(row, 3) else "0"
+            debit_str = debit_str.replace("Rp ", "").replace(",", "").strip()
+            try:
+                nominal = float(debit_str) if debit_str != "-" else 0.0
+            except ValueError:
+                nominal = 0.0
+
+            if nominal > 0:
+                self.selected_sales.append(row)
+                self.total_tagihan += nominal
+
+        # Update label total tagihan sesuai baris yang dipilih
+        if self.selected_sales:
+            self.lbl_total_tagihan.setText(
+                f"Rp {self.total_tagihan:,.0f}  (dari {len(self.selected_sales)} transaksi)"
+            )
+        else:
+            self.lbl_total_tagihan.setText(f"Rp {getattr(self, 'total_tagihan_all', 0):,.0f}")
+
+        self.btn_print.setEnabled(bool(self.selected_sales))
+        self.btn_hapus_payment.setEnabled(has_payment)
+
+    def _disable_actions(self):
+        self.selected_sales = []
+        self.total_tagihan = 0.0
+        self.btn_print.setEnabled(False)
+        self.btn_hapus_payment.setEnabled(False)
+        self.ent_deposit.setText("0")
+
+    def reset_all(self):
+        """Reset saat tidak ada klien dipilih."""
+        self.selected_client_id = None
+        self.selected_sales = []
+        self.total_tagihan = 0.0
+        self.total_tagihan_all = 0
+        self.table.setRowCount(0)
+        self.lbl_total_tagihan.setText("Rp 0")
+        self.lbl_total_bayar.setText("Rp 0")
+        self.lbl_sisa.setText("Rp 0")
+        self.lbl_status.setText("-")
+        self.lbl_status.setStyleSheet("font-size: 14pt; font-weight: bold; color: #9E9E9E;")
+        self.lbl_sisa.setStyleSheet("font-size: 16pt; font-weight: bold; color: #F44336;")
+        self.btn_print.setEnabled(False)
+        self.btn_hapus_payment.setEnabled(False)
+        self.ent_deposit.setText("0")
+
+    # ====================================================================
+    # CLEAN RUPIAH
+    # ====================================================================
     def clean_rupiah(self, val):
-        if not val: return 0.0
+        if not val:
+            return 0.0
         try:
             bersih = str(val).upper().replace("RP", "").replace(".", "").replace(",", "").replace(" ", "").strip()
             return float(bersih or 0)
-        except: 
+        except Exception:
             return 0.0
 
-    def kalkulasi_sisa(self):
-        dibayar = self.clean_rupiah(self.ent_dibayar.text())
-        sisa = self.total_tagihan - dibayar
-        self.lbl_sisa.setText(f"Rp {max(0, sisa):,.0f}")
-        if sisa <= 0:
-            self.lbl_sisa.setStyleSheet("font-size: 16pt; font-weight: bold; color: #4CAF50;")
+    def _recalculate_receivable(self, person_id):
+        """Hitung ulang ClientReceivable dari total penjualan & pembayaran nyata."""
+        total_tagihan = (
+            self.db.query(func.coalesce(func.sum(PengeluaranOffline.total), 0.0))
+            .filter(PengeluaranOffline.person_id == person_id)
+            .filter(PengeluaranOffline.is_deleted == 0)
+            .scalar()
+        ) or 0.0
+
+        receivable = (
+            self.db.query(ClientReceivable)
+            .filter(ClientReceivable.person_id == person_id)
+            .first()
+        )
+
+        total_bayar = 0.0
+        if receivable:
+            total_bayar = (
+                self.db.query(func.coalesce(func.sum(ClientReceivablePayment.nominal_bayar), 0.0))
+                .filter(ClientReceivablePayment.receivable_id == receivable.id)
+                .scalar()
+            ) or 0.0
+
+        sisa_baru = max(0.0, total_tagihan - total_bayar)
+
+        if receivable:
+            receivable.nominal = total_tagihan
+            receivable.sisa = sisa_baru
+            receivable.status = 'LUNAS' if sisa_baru <= 0 else 'OPEN'
         else:
-            self.lbl_sisa.setStyleSheet("font-size: 16pt; font-weight: bold; color: #F44336;")
+            if total_tagihan > 0:
+                receivable = ClientReceivable(
+                    person_id=person_id,
+                    nominal=total_tagihan,
+                    sisa=sisa_baru,
+                    status='OPEN' if sisa_baru > 0 else 'LUNAS',
+                )
+                self.db.add(receivable)
 
-    def reset_panel(self):
-        self.selected_sales = []
-        self.total_tagihan = 0.0
-        self.lbl_klien.setText("-")
-        self.lbl_total.setText("Rp 0")
-        self.lbl_sisa.setText("Rp 0")
-        self.ent_dibayar.setText("0")
-        self.btn_print.setEnabled(False)
-        self.btn_export.setEnabled(False)
+        self.db.commit()
+        return receivable
 
-    # ==========================================
-    # LOGIKA EXPORT EXCEL
-    # ==========================================
-    def export_to_excel(self):
-        if not self.selected_sales: return
-        
-        try:
-            import pandas as pd
-            
-            sales_data = self.db.query(PengeluaranOffline).filter(PengeluaranOffline.id.in_(self.selected_sales)).all()
-            if not sales_data: return
-            
-            data_export = []
-            for item in sales_data:
-                data_export.append({
-                    "id": item.id,
-                    "tanggal": item.tanggal,
-                    "person_id": item.person_id,
-                    "nama_klien": item.person.nama if item.person else "-",
-                    "sku_id": item.sku_id,
-                    # --- PERBAIKAN: Menuliskan KODE SKU di Excel ---
-                    "kode_sku": item.sku.kode_sku if item.sku else "-",
-                    # -----------------------------------------------
-                    "qty": item.qty,
-                    "harga_satuan": item.harga_satuan,
-                    "total": item.total
-                })
-                
-            df = pd.DataFrame(data_export)
-            
-            nama_klien = self.lbl_klien.text().replace(" ", "_")
-            tgl_sekarang = datetime.datetime.now().strftime("%Y%m%d")
-            default_name = f"Export_Pelunasan_{nama_klien}_{tgl_sekarang}.xlsx"
-            
-            file_path, _ = QFileDialog.getSaveFileName(
-                self, "Simpan Export Excel", default_name, "Excel Files (*.xlsx)"
+    # ====================================================================
+    # SAVE DEPOSIT + PRINT INVOICE PDF
+    # ====================================================================
+    def _save_and_print(self):
+        """Simpan deposit ke database, lalu cetak invoice PDF."""
+        if not self.selected_client_id or not self.selected_sales:
+            return
+
+        deposit = self.clean_rupiah(self.ent_deposit.text())
+        if deposit < 0:
+            QMessageBox.warning(self, "Error", "Deposit tidak boleh minus!")
+            return
+
+        tanggal = self.date_deposit.date().toString("yyyy-MM-dd")
+        metode = self.cb_metode.currentText()
+
+        # Konfirmasi: simpan deposit atau hanya cetak ulang?
+        simpan_deposit = False
+        if deposit > 0:
+            reply = QMessageBox.question(
+                self, "Konfirmasi Deposit",
+                f"Simpan deposit Rp {deposit:,.0f} ke database?\n\n"
+                f"Pilih YA jika ini pembayaran baru dari klien.\n"
+                f"Pilih TIDAK jika hanya cetak ulang (deposit tidak disimpan).",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.Yes,
             )
-            
-            if file_path:
-                df.to_excel(file_path, index=False)
-                QMessageBox.information(self, "Sukses", f"Data berhasil diexport ke:\n{file_path}")
-                self.table.clearSelection()
-                self.reset_panel()
-                
-        except ImportError:
-            QMessageBox.critical(self, "Error", "Library 'pandas' atau 'openpyxl' belum terinstal.")
-        except Exception as e:
-            QMessageBox.critical(self, "Error Export", f"Terjadi kesalahan saat menyimpan Excel:\n{str(e)}\n\n{traceback.format_exc()}")
+            simpan_deposit = (reply == QMessageBox.StandardButton.Yes)
 
-    # ==========================================
-    # LOGIKA CETAK PDF
-    # ==========================================
-    def print_multi_invoice(self):
-        if not self.selected_sales: return
-        
         try:
-            from fpdf import FPDF
-            
-            sales_data = self.db.query(PengeluaranOffline).filter(PengeluaranOffline.id.in_(self.selected_sales)).all()
-            if not sales_data: return
-            
-            nama_klien = self.lbl_klien.text()
-            dibayar = self.clean_rupiah(self.ent_dibayar.text())
-            sisa_akhir = self.total_tagihan - dibayar
-            
-            try:
-                BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-                APP_DIR = os.path.dirname(os.path.dirname(BASE_DIR))
-            except NameError:
-                APP_DIR = os.getcwd()
-                
-            FOLDER = os.path.join(APP_DIR, "exports", "invoices")
-            if not os.path.exists(FOLDER): os.makedirs(FOLDER)
-            
-            timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-            no_inv = f"INV-MULTI-{timestamp}"
-            tanggal = datetime.date.today().strftime("%d %B %Y")
-            
-            pdf = FPDF(); pdf.add_page()
-            
-            pdf.set_font("Arial", 'B', 26); pdf.set_text_color(33, 150, 243); pdf.cell(100, 10, "ESSA STORE", 0, 0, 'L')
-            pdf.set_font("Arial", 'B', 24); pdf.set_text_color(60, 60, 60); pdf.cell(90, 10, "INVOICE", 0, 1, 'R')
-            pdf.set_font("Arial", '', 10); pdf.set_text_color(100, 100, 100)
-            pdf.cell(100, 5, "WA: 0895426950709 | 08888169421", 0, 0, 'L')
-            pdf.cell(90, 5, f"No. Ref : {no_inv}", 0, 1, 'R')
-            pdf.cell(100, 5, "Pendosawalan 16/06, Kec. Kalinyamatan, Jepara", 0, 0, 'L')
-            pdf.cell(90, 5, f"Tanggal : {tanggal}", 0, 1, 'R'); pdf.ln(5)
-            
-            pdf.set_draw_color(33, 150, 243); pdf.set_line_width(0.6); pdf.line(10, pdf.get_y(), 200, pdf.get_y()); pdf.ln(8)
-            
-            pdf.set_font("Arial", 'B', 10); pdf.set_text_color(150, 150, 150); pdf.cell(0, 5, "TAGIHAN KEPADA:", 0, 1)
-            pdf.set_font("Arial", 'B', 14); pdf.set_text_color(0, 0, 0); pdf.cell(0, 7, nama_klien, 0, 1); pdf.ln(6)
-            
-            pdf.set_fill_color(33, 150, 243); pdf.set_text_color(255, 255, 255); pdf.set_font("Arial", 'B', 10)
-            pdf.cell(12, 9, "No", 1, 0, 'C', 1); pdf.cell(83, 9, "Deskripsi Barang", 1, 0, 'L', 1)
-            pdf.cell(15, 9, "Qty", 1, 0, 'C', 1); pdf.cell(40, 9, "Harga Satuan", 1, 0, 'R', 1); pdf.cell(40, 9, "Total", 1, 1, 'R', 1)
-            
-            pdf.set_text_color(0, 0, 0); pdf.set_font("Arial", '', 10)
-            for idx, item in enumerate(sales_data, 1):
-                fill = 1 if idx % 2 == 0 else 0; pdf.set_fill_color(248, 248, 248)
-                
-                # --- PERBAIKAN: Menuliskan KODE SKU di PDF ---
-                kode_produk = item.sku.kode_sku if item.sku else "Barang Offline"
-                desc = f"[{item.tanggal}] {kode_produk}"[:42].encode('latin-1', 'replace').decode('latin-1')
-                # ---------------------------------------------
-                
-                pdf.cell(12, 8, str(idx), 1, 0, 'C', fill); pdf.cell(83, 8, f" {desc}", 1, 0, 'L', fill)
-                pdf.cell(15, 8, str(item.qty), 1, 0, 'C', fill); pdf.cell(40, 8, f"Rp {item.harga_satuan:,.0f}", 1, 0, 'R', fill)
-                pdf.cell(40, 8, f"Rp {item.total:,.0f}", 1, 1, 'R', fill); pdf.ln(0)
-            
-            pdf.ln(8); pdf.set_font("Arial", '', 10)
-            pdf.cell(100, 6, "", 0, 0); pdf.cell(45, 6, "Total Tagihan", 0, 0, 'R'); pdf.cell(45, 6, f"Rp {self.total_tagihan:,.0f}", 0, 1, 'R')
-            pdf.cell(100, 6, "", 0, 0); pdf.cell(45, 6, "Dibayar Saat Ini", 0, 0, 'R')
-            pdf.set_text_color(40, 167, 69); pdf.cell(45, 6, f"Rp {dibayar:,.0f}", 0, 1, 'R'); pdf.ln(2); pdf.set_text_color(0, 0, 0)
-            
-            pdf.set_fill_color(253, 236, 240); pdf.set_text_color(233, 30, 99); pdf.set_font("Arial", 'B', 12)
-            pdf.cell(90, 10, "", 0, 0); pdf.cell(55, 10, "SISA HUTANG", 1, 0, 'R', 1); pdf.cell(45, 10, f"Rp {max(0, sisa_akhir):,.0f}", 1, 1, 'R', 1)
-            
-            pdf.set_y(-60); pdf.set_text_color(0, 0, 0); pdf.set_font("Arial", 'B', 10); pdf.cell(0, 6, "Instruksi Pembayaran:", 0, 1)
-            pdf.set_font("Arial", '', 10); pdf.cell(0, 6, "Mohon lakukan transfer ke: Bank BRI No. Rek: 224001017473501 a/n ACHMAD FAIS SETIAWAN", 0, 1)
-            pdf.ln(8); pdf.set_font("Arial", 'I', 10); pdf.set_text_color(150, 150, 150); pdf.cell(0, 5, "Terima kasih atas kepercayaan Anda.", 0, 1, 'C')
+            # --- HITUNG SISA SEBELUMNYA (balance sebelum baris penjualan pertama) ---
+            all_rows = self._get_combined_rows(self.selected_client_id)
+            running = 0.0
+            sisa_sebelum = 0.0
 
-            out_path = os.path.join(FOLDER, f"{no_inv}_{nama_klien.replace(' ','_')}.pdf")
-            pdf.output(out_path)
-            
+            # Ambil baris pertama yang dipilih
+            first_selected_sort_key = None
+            for r in all_rows:
+                if r["id"].startswith("S"):
+                    # Check if this ID corresponds to a selected row
+                    pass  # We'll compute by iterating
+
+            # Simple approach: compute balance before the first selected sale
+            found_first = False
+            for r in all_rows:
+                if not found_first:
+                    running += r["debit"] - r["credit"]
+                    for sel_row in self.selected_sales:
+                        cell_id = self.table.item(sel_row, 0)
+                        if cell_id and cell_id.text() == r["id"] and r["jenis"] == "Penjualan":
+                            sisa_sebelum = running - r["debit"]  # balance right before this sale
+                            found_first = True
+                            break
+                if found_first:
+                    break
+
+            # --- SIMPAN DEPOSIT (jika dikonfirmasi) via recalculate ---
+            if simpan_deposit:
+                receivable = (
+                    self.db.query(ClientReceivable)
+                    .filter(ClientReceivable.person_id == self.selected_client_id)
+                    .first()
+                )
+
+                if not receivable:
+                    # Buat receivable dulu baru bisa tambah payment
+                    total_tagihan = (
+                        self.db.query(func.coalesce(func.sum(PengeluaranOffline.total), 0.0))
+                        .filter(PengeluaranOffline.person_id == self.selected_client_id)
+                        .filter(PengeluaranOffline.is_deleted == 0)
+                        .scalar()
+                    ) or 0.0
+                    receivable = ClientReceivable(
+                        person_id=self.selected_client_id,
+                        nominal=total_tagihan,
+                        sisa=total_tagihan,
+                        status='OPEN',
+                    )
+                    self.db.add(receivable)
+                    self.db.flush()
+
+                payment = ClientReceivablePayment(
+                    receivable_id=receivable.id,
+                    tanggal_bayar=tanggal,
+                    nominal_bayar=deposit,
+                    metode=metode,
+                )
+                self.db.add(payment)
+
+                # Recalculate dari data nyata (self-healing)
+                self._recalculate_receivable(self.selected_client_id)
+
+                if self.notifier:
+                    self.notifier.database_changed.emit()
+            # else: tidak menyimpan deposit — langsung cetak
+
+            # --- QUERY SALES DATA UNTUK PDF ---
+            selected_ids = []
+            for row in self.selected_sales:
+                id_item = self.table.item(row, 0)
+                if id_item and id_item.text().startswith("S"):
+                    try:
+                        selected_ids.append(int(id_item.text()[1:]))
+                    except ValueError:
+                        continue
+
+            sales_data = []
+            if selected_ids:
+                sales_data = (
+                    self.db.query(PengeluaranOffline)
+                    .filter(PengeluaranOffline.id.in_(selected_ids))
+                    .order_by(PengeluaranOffline.tanggal, PengeluaranOffline.id)
+                    .all()
+                )
+
+            if not sales_data:
+                QMessageBox.warning(self, "Error", "Tidak ada data penjualan untuk dicetak.")
+                return
+
+            nama_klien = sales_data[0].person.nama if sales_data[0].person else "Unknown"
+
+            # --- CETAK PDF via pdf_engine ---
+            out_path = generate_invoice_pdf(
+                sales_data=sales_data,
+                nama_klien=nama_klien,
+                total_tagihan=self.total_tagihan,
+                sisa_sebelum=sisa_sebelum,
+                deposit=deposit,
+                tgl_deposit=tanggal,
+                metode=metode,
+                simpan_deposit=simpan_deposit,
+            )
+
             os.startfile(out_path)
             self.table.clearSelection()
-            self.reset_panel()
-            
-            QMessageBox.information(self, "Sukses", f"Invoice PDF berhasil dicetak dan disimpan di folder exports/invoices!")
 
-        except Exception as e: 
-            QMessageBox.critical(self, "Error PDF", f"Gagal mencetak: {str(e)}\n\nDetail:\n{traceback.format_exc()}")
+            # --- REFRESH ---
+            self.load_client_data(self.selected_client_id)
+            self.ent_deposit.setText("0")
 
+            sisa_baru = max(0.0, sisa_sebelum + self.total_tagihan - deposit)
+            if simpan_deposit:
+                QMessageBox.information(
+                    self, "Sukses",
+                    f"Invoice berhasil dicetak!\n\n"
+                    f"Deposit Rp {deposit:,.0f} tercatat.\n"
+                    f"Sisa hutang baru: Rp {sisa_baru:,.0f}"
+                )
+            else:
+                QMessageBox.information(
+                    self, "Sukses",
+                    "Invoice berhasil dicetak!"
+                )
+
+        except Exception as e:
+            self.db.rollback()
+            self.db.expire_all()
+            QMessageBox.critical(
+                self, "Error",
+                f"Gagal memproses invoice:\n{str(e)}\n\n{traceback.format_exc()}"
+            )
+
+    # ====================================================================
+    # EXPORT EXCEL
+    # ====================================================================
+    def delete_selected_payment(self):
+        """Hapus baris pembayaran (deposit) yang dipilih — undo accidental save."""
+        if not self.selected_client_id:
+            return
+
+        selected_rows = set()
+        for item in self.table.selectedItems():
+            selected_rows.add(item.row())
+
+        payment_ids = []
+        for row in selected_rows:
+            id_item = self.table.item(row, 0)
+            if id_item and id_item.text().startswith("P"):
+                try:
+                    payment_ids.append(int(id_item.text()[1:]))
+                except ValueError:
+                    continue
+
+        if not payment_ids:
+            return
+
+        reply = QMessageBox.question(
+            self, "Konfirmasi Hapus",
+            f"Hapus {len(payment_ids)} riwayat pembayaran?\n\n"
+            f"Data deposit akan dihapus permanen dan sisa piutang "
+            f"akan dikembalikan ke nilai sebelumnya.\n\n"
+            f"Yakin ingin melanjutkan?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+
+        try:
+            for pid in payment_ids:
+                payment = self.db.query(ClientReceivablePayment).get(pid)
+                if payment:
+                    self.db.delete(payment)
+
+            # Recalculate dari data nyata (self-healing)
+            self._recalculate_receivable(self.selected_client_id)
+
+            if self.notifier:
+                self.notifier.database_changed.emit()
+
+            self.load_client_data(self.selected_client_id)
+            QMessageBox.information(
+                self, "Sukses",
+                f"{len(payment_ids)} pembayaran berhasil dihapus.\n"
+                f"Sisa piutang sudah diperbarui."
+            )
+
+        except Exception as e:
+            self.db.rollback()
+            self.db.expire_all()
+            QMessageBox.critical(
+                self, "Error",
+                f"Gagal menghapus pembayaran:\n{str(e)}\n\n{traceback.format_exc()}"
+            )
+
+    # ====================================================================
+    # CLOSE
+    # ====================================================================
     def closeEvent(self, event):
         self.db.close()
         super().closeEvent(event)

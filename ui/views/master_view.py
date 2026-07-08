@@ -458,6 +458,9 @@ class MasterDataView(QWidget):
                 self.log_errors.append("\n".join(errs))
             self.lbl_tarif_result.setText(f"✅ {ok} Tarif berhasil diimport. {skip} baris dilewati.")
             self.lbl_tarif_result.setStyleSheet(f"color: {Theme.NEON_CYAN}; font-weight: bold;")
+            # Beritahu view lain (Payroll, Profit, dll) untuk refresh dropdown
+            if self.notifier:
+                self.notifier.database_changed.emit()
         except Exception as e:
             self.lbl_tarif_result.setText(f"❌ Gagal: {e}")
             self.lbl_tarif_result.setStyleSheet(f"color: {Theme.NEON_PINK};")

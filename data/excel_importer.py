@@ -13,6 +13,7 @@ import openpyxl
 import re
 from data.models.sku import SkuMaster
 from data.models.master import TarifMaster
+from data.models.salary import MasterTarifPenjahit
 
 
 # ---------------------------------------------------------------------------
@@ -203,6 +204,29 @@ def import_tarif_from_excel(filepath: str, session) -> dict:
                         tarif_pengsup_potongan=fields.get("tarif_pengsup_potongan", 0.0),
                     )
                 )
+
+            # --- SINKRON: jika ada tarif_jahit, upsert juga ke MasterTarifPenjahit ---
+            # (agar SKU Penjahit muncul di dropdown Payroll → tab Penjahit)
+            tarif_jahit = fields.get("tarif_jahit", 0.0)
+            if tarif_jahit > 0:
+                existing_penj = (
+                    session.query(MasterTarifPenjahit)
+                    .filter(MasterTarifPenjahit.kode_garapan == kode_sku)
+                    .first()
+                )
+                if existing_penj:
+                    existing_penj.kode_garapan = kode_sku
+                    existing_penj.harga = tarif_jahit
+                    existing_penj.is_active = 1
+                else:
+                    session.add(
+                        MasterTarifPenjahit(
+                            kode_garapan=kode_sku,
+                            harga=tarif_jahit,
+                            is_active=1,
+                        )
+                    )
+
             stats["imported"] += 1
         except Exception as e:
             stats["errors"].append(f"Upsert {kode_sku}: {e}")

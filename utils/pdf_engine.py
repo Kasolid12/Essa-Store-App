@@ -529,90 +529,165 @@ def generate_salary_slip(salary_run_id):
     finally:
         db.close()
 
-def generate_invoice_pdf(offline_sale_id):
-    """Generates an Industrial-style PDF Sales Invoice."""
-    db = SessionLocal()
+def generate_invoice_pdf(sales_data, nama_klien, total_tagihan, sisa_sebelum,
+                        deposit=0, tgl_deposit="-", metode="TUNAI",
+                        simpan_deposit=False):
+    """
+    Generate PDF Invoice dengan format:
+    Sisa Sebelumnya + Transaksi Baru - Deposit = Sisa Baru.
+
+    Args:
+        sales_data: list of PengeluaranOffline objects (yang dipilih).
+        nama_klien: str — nama klien.
+        total_tagihan: float — total dari semua sales_data.
+        sisa_sebelum: float — sisa hutang sebelum transaksi pertama.
+        deposit: float — jumlah deposit (0 jika tidak ada).
+        tgl_deposit: str — tanggal deposit.
+        metode: str — metode pembayaran (TUNAI/TRANSFER).
+        simpan_deposit: bool — untuk pesan di result.
+
+    Returns:
+        str — path file PDF yang dihasilkan.
+    """
+    from fpdf import FPDF
+    import os, datetime
+
+    sisa_baru = max(0.0, sisa_sebelum + total_tagihan - deposit)
+
     try:
-        sale = db.query(PengeluaranOffline).get(offline_sale_id)
-        if not sale:
-            raise ValueError("Data Penjualan Offline tidak ditemukan.")
-            
-        person = sale.person
-        sku = sale.sku
-        
-        # Setup the File Path
-        export_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "exports", "invoices")
-        os.makedirs(export_dir, exist_ok=True)
-        
-        filename = f"INV_{sale.id:06d}_{person.nama.replace(' ', '_')}.pdf"
-        filepath = os.path.join(export_dir, filename)
+        BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+        APP_DIR = os.path.dirname(BASE_DIR)  # naik dari utils/ ke root
+    except NameError:
+        APP_DIR = os.getcwd()
 
-        # Initialize the PDF Canvas (A5 Landscape)
-        c = canvas.Canvas(filepath, pagesize=(210*mm, 148*mm))
-        
-        # --- DRAWING THE INDUSTRIAL AESTHETIC ---
-        
-        # Outer Border
-        c.setLineWidth(2)
-        c.rect(10*mm, 10*mm, 190*mm, 128*mm)
-        c.setLineWidth(1)
-        c.rect(12*mm, 12*mm, 186*mm, 124*mm) 
-        
-        # HEADER
-        c.setFont("Helvetica-Bold", 20)
-        c.drawString(16*mm, 120*mm, "ESSA STORE // OFFICIAL INVOICE")
-        
-        c.setFont("Helvetica", 10)
-        c.drawString(16*mm, 112*mm, f"DATE ISSUED : {sale.tanggal}")
-        c.drawString(16*mm, 107*mm, f"INVOICE NO  : INV-{sale.id:06d}")
-        
-        # Divider Line
-        c.line(16*mm, 102*mm, 194*mm, 102*mm)
+    FOLDER = os.path.join(APP_DIR, "exports", "invoices")
+    if not os.path.exists(FOLDER):
+        os.makedirs(FOLDER)
 
-        # BILLING DETAILS
-        c.setFont("Helvetica-Bold", 12)
-        c.drawString(16*mm, 92*mm, "BILLED TO:")
-        c.setFont("Helvetica", 11)
-        c.drawString(16*mm, 84*mm, person.nama.upper())
-        c.drawString(16*mm, 78*mm, f"CATEGORY: {person.person_type}")
+    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    no_inv = f"INV-{timestamp}"
+    tgl_cetak = datetime.date.today().strftime("%d %B %Y")
 
-        # ITEMIZED BOX
-        c.rect(16*mm, 45*mm, 178*mm, 25*mm) 
-        c.setFont("Helvetica-Bold", 10)
-        c.drawString(20*mm, 63*mm, "ITEM DESCRIPTION")
-        c.drawString(120*mm, 63*mm, "QTY")
-        c.drawString(140*mm, 63*mm, "UNIT PRICE")
-        c.drawRightString(190*mm, 63*mm, "TOTAL")
-        
-        # Inner Divider
-        c.line(16*mm, 59*mm, 194*mm, 59*mm)
-        
-        # Item Row
-        c.setFont("Helvetica", 10)
-        product_name = f"[{sku.kode_sku}] {sku.nama_produk}"
-        # Truncate if too long so it doesn't overlap prices
-        if len(product_name) > 45: product_name = product_name[:42] + "..."
-        
-        c.drawString(20*mm, 51*mm, product_name)
-        c.drawString(120*mm, 51*mm, f"{sale.qty:,}")
-        c.drawString(140*mm, 51*mm, f"Rp {sale.harga_satuan:,.0f}")
-        c.drawRightString(190*mm, 51*mm, f"Rp {sale.total:,.0f}")
+    pdf = FPDF()
+    pdf.add_page()
 
-        # GRAND TOTAL
-        c.setFont("Helvetica-Bold", 14)
-        c.drawString(110*mm, 30*mm, "GRAND TOTAL :")
-        c.drawRightString(190*mm, 30*mm, f"Rp {sale.total:,.0f}")
+    # ── HEADER PERUSAHAAN ──
+    pdf.set_font("Arial", 'B', 26)
+    pdf.set_text_color(33, 150, 243)
+    pdf.cell(100, 10, "ESSA STORE", 0, 0, 'L')
+    pdf.set_font("Arial", 'B', 24)
+    pdf.set_text_color(60, 60, 60)
+    pdf.cell(90, 10, "INVOICE", 0, 1, 'R')
 
-        # FOOTER / SIGNATURES
-        c.setFont("Helvetica", 10)
-        c.drawString(20*mm, 30*mm, "AUTHORIZED SIGNATURE")
-        c.line(20*mm, 20*mm, 70*mm, 20*mm)
+    pdf.set_font("Arial", '', 10)
+    pdf.set_text_color(100, 100, 100)
+    pdf.cell(100, 5, "WA: 0895426950709 | 08888169421", 0, 0, 'L')
+    pdf.cell(90, 5, f"No. Ref : {no_inv}", 0, 1, 'R')
+    pdf.cell(100, 5, "Pendosawalan 16/06, Kec. Kalinyamatan, Jepara", 0, 0, 'L')
+    pdf.cell(90, 5, f"Tanggal : {tgl_cetak}", 0, 1, 'R')
+    pdf.ln(5)
 
-        c.save()
-        return filepath
-        
-    finally:
-        db.close()
+    # Garis
+    pdf.set_draw_color(33, 150, 243)
+    pdf.set_line_width(0.6)
+    pdf.line(10, pdf.get_y(), 200, pdf.get_y())
+    pdf.ln(8)
+
+    # ── KEPADA ──
+    pdf.set_font("Arial", 'B', 10)
+    pdf.set_text_color(150, 150, 150)
+    pdf.cell(0, 5, "TAGIHAN KEPADA:", 0, 1)
+    pdf.set_font("Arial", 'B', 14)
+    pdf.set_text_color(0, 0, 0)
+    pdf.cell(0, 7, nama_klien, 0, 1)
+    pdf.ln(6)
+
+    # ── TABEL HEADER ──
+    pdf.set_fill_color(33, 150, 243)
+    pdf.set_text_color(255, 255, 255)
+    pdf.set_font("Arial", 'B', 10)
+    pdf.cell(12, 9, "No", 1, 0, 'C', 1)
+    pdf.cell(78, 9, "Deskripsi Barang", 1, 0, 'L', 1)
+    pdf.cell(15, 9, "Qty", 1, 0, 'C', 1)
+    pdf.cell(40, 9, "Harga Satuan", 1, 0, 'R', 1)
+    pdf.cell(45, 9, "Total", 1, 1, 'R', 1)
+
+    # ── TABEL BODY ──
+    pdf.set_text_color(0, 0, 0)
+    pdf.set_font("Arial", '', 10)
+    for idx, item in enumerate(sales_data, 1):
+        fill = 1 if idx % 2 == 0 else 0
+        pdf.set_fill_color(248, 248, 248)
+
+        kode_produk = item.sku.kode_sku if item.sku else "Barang Offline"
+        desc = f"[{item.tanggal}] {kode_produk}"[:42].encode('latin-1', 'replace').decode('latin-1')
+
+        pdf.cell(12, 8, str(idx), 1, 0, 'C', fill)
+        pdf.cell(78, 8, f" {desc}", 1, 0, 'L', fill)
+        pdf.cell(15, 8, str(item.qty), 1, 0, 'C', fill)
+        pdf.cell(40, 8, f"Rp {item.harga_satuan:,.0f}", 1, 0, 'R', fill)
+        pdf.cell(45, 8, f"Rp {item.total:,.0f}", 1, 1, 'R', fill)
+        pdf.ln(0)
+    pdf.ln(6)
+
+    # ── KALKULASI SISA ──
+    pdf.set_font("Arial", '', 10)
+    pdf.set_text_color(0, 0, 0)
+
+    pdf.cell(90, 7, "", 0, 0)
+    pdf.cell(50, 7, "Sisa Hutang Sebelumnya", 0, 0, 'R')
+    pdf.cell(50, 7, f"Rp {sisa_sebelum:,.0f}", 0, 1, 'R')
+
+    pdf.cell(90, 7, "", 0, 0)
+    pdf.cell(50, 7, "Total Transaksi Baru", 0, 0, 'R')
+    pdf.cell(50, 7, f"Rp {total_tagihan:,.0f}", 0, 1, 'R')
+
+    pdf.set_font("Arial", 'B', 10)
+    pdf.cell(90, 7, "", 0, 0)
+    pdf.cell(50, 7, "Subtotal", 0, 0, 'R')
+    subtotal = sisa_sebelum + total_tagihan
+    pdf.cell(50, 7, f"Rp {subtotal:,.0f}", 0, 1, 'R')
+    pdf.ln(2)
+
+    # Deposit — hanya tampil jika > 0
+    if deposit > 0:
+        pdf.set_text_color(40, 167, 69)
+        pdf.set_font("Arial", 'B', 10)
+        pdf.cell(90, 7, "", 0, 0)
+        pdf.cell(50, 7, f"Deposit ({tgl_deposit}, {metode})", 0, 0, 'R')
+        pdf.cell(50, 7, f"- Rp {deposit:,.0f}", 0, 1, 'R')
+        pdf.ln(2)
+
+    # Sisa baru
+    pdf.set_text_color(0, 0, 0)
+    pdf.set_font("Arial", 'B', 10)
+    pdf.cell(90, 7, "", 0, 0)
+    pdf.cell(50, 7, "Sisa Hutang Baru", 0, 0, 'R')
+
+    if sisa_baru <= 0:
+        pdf.set_text_color(40, 167, 69)  # LUNAS
+        pdf.cell(50, 7, "Rp 0 (LUNAS)", 0, 1, 'R')
+    else:
+        pdf.set_text_color(233, 30, 99)
+        pdf.cell(50, 7, f"Rp {sisa_baru:,.0f}", 0, 1, 'R')
+
+    pdf.ln(6)
+
+    # Instruksi pembayaran
+    pdf.set_y(-60)
+    pdf.set_text_color(0, 0, 0)
+    pdf.set_font("Arial", 'B', 10)
+    pdf.cell(0, 6, "Instruksi Pembayaran:", 0, 1)
+    pdf.set_font("Arial", '', 10)
+    pdf.cell(0, 6, "Mohon lakukan transfer ke: Bank BRI No. Rek: 224001017473501 a/n ACHMAD FAIS SETIAWAN", 0, 1)
+    pdf.ln(8)
+    pdf.set_font("Arial", 'I', 10)
+    pdf.set_text_color(150, 150, 150)
+    pdf.cell(0, 5, "Terima kasih atas kepercayaan Anda.", 0, 1, 'C')
+
+    out_path = os.path.join(FOLDER, f"{no_inv}_{nama_klien.replace(' ','_')}.pdf")
+    pdf.output(out_path)
+    return out_path
         
 def generate_batch_receipt_pdf(nama_supplier, tipe_hutang, nominal_uang, items, sisa_awal, sisa_akhir):
     """Generates a dynamic PDF receipt for batch payments."""
@@ -663,7 +738,7 @@ def generate_batch_receipt_pdf(nama_supplier, tipe_hutang, nominal_uang, items, 
     c.drawString(15*mm, y, "TGL")
     c.drawString(32*mm, y, "DESKRIPSI")
     c.drawString(78*mm, y, "QTY")
-    c.drawString(92*mm, y, "HARGA/SATUAN")
+    c.drawString(92*mm, y, "HARGA/KG")
     c.drawRightString(133*mm, y, "DIBAYAR")
     y -= 3*mm
     c.line(15*mm, y, 133*mm, y)

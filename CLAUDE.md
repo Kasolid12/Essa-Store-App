@@ -191,52 +191,9 @@ All previously open bugs in `catatan_harian ↔ hutang ↔ profit` were resolved
 
 ---
 
-## 8. Active Work — Session 8 (2026-06-27)
-
-### Task A: Excel Importer (`data/excel_importer.py`)
-- **`import_sku_from_excel(filepath, session)`**: Baca MasterSKU.xlsx → upsert ke `SkuMaster`.
-  Format sheet "Master SKU": [Nomor SKU, Judul, Rata-Rata Modal Bobot].
-- **`import_tarif_from_excel(filepath, session)`**: Baca Master_tarif.xlsx → upsert ke `TarifMaster`.
-  Sheet "SKU_Pengsup": [Nomor SKU, Kain, Potongan] → `tarif_pengsup_kain`, `tarif_pengsup_potongan`.
-  Sheet "SKU_Penjahit": [SKU, Harga Satuan] → `tarif_jahit`.
-- **UI**: Tab baru "IMPORT EXCEL" di `master_view.py` — tombol pilih file + import.
-
-### Task B: Dashboard Profit Full-Cut Filter
-- **`data/dashboard_queries.py`** → `get_profit_produksi()`:
-  LEFT JOIN `profit_history` ↔ `debt_entries` via `debt_entry_id`.
-  Hanya hitung profit jika `de.status_cutting = 'SELESAI'` (full cut) atau `ph.debt_entry_id IS NULL`.
-  Status full-cut di-toggle via tombol "TANDAI KAIN HABIS (FULL CUT)" di Profit Simulation.
-
-### Task C: Bug Fix Payroll — "int object has no attribute is_integer"
-- ✅ Root cause: `SalaryLineItem.qty` adalah Integer column → `item.qty` return `int`, tapi dipanggil `.is_integer()` method milik `float`.
-- ✅ Fix: 4 baris di `utils/pdf_engine.py` — wrapping `float(item.qty)` sebelum `.is_integer()`.
-- ✅ Semua tab payroll dicek: Penjahit ✅, Pengsup ✅, Karyawan ✅, Bon ✅.
-
-### Task D: Fix Edit Jam Absensi Karyawan (read-only table)
-- ✅ Root cause: `CyberTable` default `NoEditTriggers` — tabel edit absensi tidak bisa diedit.
-- ✅ Fix: Override `setEditTriggers(DoubleClicked)` di `setup_tab_edit_karyawan()`.
-- ✅ Alur: double-click jam masuk/keluar → isi format `HH:MM` → tombol "HITUNG ULANG & TERAPKAN".
-
-### Task E: Karyawan diedit hilang dari PDF (format mismatch)
-- ✅ Root cause: `submit_edit_karyawan()` simpan tarif dgn "Rp" (`"Rp 150"`) tapi `submit_pasukan()` parsing tanpa hapus "Rp" → ValueError → skip karyawan.
-- ✅ Fix: simpan tarif tanpa "Rp" (`f"{tarif_normal:g}"`) + `.replace('Rp ','')` di parsing submit_pasukan.
-- ✅ Defense-in-depth untuk data lama.
-
-### Task F: Column misalignment di tabel default Gaji Karyawan
-- ✅ Root cause: `load_karyawan_data()` pakai col index 5-8, tapi seharusnya 7-10 (tambah 2 kolom baru: Menit Lembur & Tarif Lembur di posisi 5-6).
-- ✅ Fix: Col 5-6 diisi "0" (dulu tidak diisi); Col 7 ← Gaji Kotor; Col 8 ← Bon Lama; Col 9 ← Potong Kasbon; Col 10 ← Gaji Bersih.
-- ✅ Verifikasi semua fungsi rujuk col index yang sama (`submit_pasukan`, `submit_edit_karyawan`, `import_absensi_excel`, `recalc_pasukan`, `buka_editor_karyawan`).
-
-### Status Rules
-- ✅ Selesai
-- ❌ Belum dikerjakan
-
----
-
-## 9. Session Log (frozen — for context only)
+## 8. Session Log (frozen — for context only)
 
 Setiap entry = satu session kerja. Format: satu baris per session.
-Lihat Rule 10.9 untuk panduan penulisan.
 
 1. ✅ Session 1–2: Removed bi_agent/Live Dashboard/overhead; built dashboard query functions.
 2. ✅ Session 3: Added profit_history model + migration + wired up profit_view.py.
@@ -245,9 +202,14 @@ Lihat Rule 10.9 untuk panduan penulisan.
 5. ✅ Session 6 (2026-06-25): Fitur Search Global & Tombol Hapus di Catatan Harian.
 6. ✅ Session 7 (2026-06-26): Font PDF Courier→Helvetica; Profit tanggal kain acuan dari Hutang; Anti-duplicate payroll; Auto-sinkron Data Manager→semua menu; Fix edit/hapus Pengeluaran Offline.
 7. ✅ Session 8 (2026-06-27): Excel Importer (import SKU + Tarif dari Excel); Dashboard Profit hanya tampilkan batch Full Cut.
+8. ✅ Session 9 (2026-07-07): MasterTarifPenjahit sync dari TarifMaster (excel_importer); Piutang system overhaul (harian_view sync + invoice_view rewrite); Auto-Profit Simulation (activated signal); Startup sync di main.py; Bugfix profit infinite loop + invoice auto-select + signal ordering.
+9. ✅ Session 10 (2026-07-07): Refactor PDF invoice ke pdf_engine; HAPUS PEMBAYARAN (ganti EXPORT EXCEL); Fix Total Tagihan seleksi; Self-healing piutang via `_recalculate_receivable()`.
 
-No historical "TODO" / "ada bug" lines should remain in code unless explicitly
-re-opened by the user.
+---
+
+## 9. Active Work — (empty)
+
+Semua task Session 10 selesai. Tidak ada active work.
 
 ---
 
@@ -265,6 +227,6 @@ Before touching anything, re-read this list.
 7. ✅ Before deleting or overwriting, re-read the target — surface contradictions
    instead of silently proceeding.
 8. ✅ Confirm before any hard-to-reverse or outward-facing action.
-9. ✅ **Session Log satu baris per session.** Setiap entry di Session Log (section 9)
+9. ✅ **Session Log satu baris per session.** Setiap entry di Session Log (section 8)
    hanya satu baris, format: `N. ✅ Session X (YYYY-MM-DD): Deskripsi singkat —
    file terkunci.` Tidak perlu detail teknis panjang; simpan di Active Work saja.

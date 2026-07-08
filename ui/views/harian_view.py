@@ -6,6 +6,7 @@ from PySide6.QtWidgets import (
     QGridLayout, QLineEdit, QAbstractItemView
 )
 from PySide6.QtCore import Qt, QDate, QTimer
+from sqlalchemy import func
 
 from ui.components.tables import CyberTable
 from ui.components.buttons import CyberButton
@@ -13,6 +14,7 @@ from ui.theme import Theme
 from data.database import SessionLocal
 from data.models import HasilCutting, DistribusiCutting, PengeluaranOffline, ModalOperasional, SkuMaster, Person
 from data.models.debt import DebtEntry
+from data.models.invoice import ClientReceivable, ClientReceivablePayment
 
 class CatatanHarianView(QWidget):
     def __init__(self, notifier=None):
@@ -955,6 +957,8 @@ class CatatanHarianView(QWidget):
                 msg = "Data Penjualan berhasil disimpan!"
                 
             self.db.commit()
+            # Sinkron piutang: update ClientReceivable untuk person ini
+            self._sync_client_receivable(person_id)
             if hasattr(self, 'notifier') and self.notifier:
                 print("[*] Broadcasting database changes to all menus...")
                 self.notifier.database_changed.emit()
@@ -962,11 +966,59 @@ class CatatanHarianView(QWidget):
             self.apply_search_filter()
             self.reset_offline_form()
             QMessageBox.information(self, "Sukses", msg)
-            
+
         except Exception as e:
             self.db.rollback()
             self.db.expire_all()
             QMessageBox.critical(self, "Error", f"Gagal: {e}")
+
+    def _sync_client_receivable(self, person_id):
+        """Sinkron ClientReceivable untuk person_id berdasarkan total penjualan offline
+        dan total pembayaran yang sudah tercatat."""
+        try:
+            # Hitung total penjualan offline (aktif, belum dihapus)
+            total_tagihan = (
+                self.db.query(func.coalesce(func.sum(PengeluaranOffline.total), 0.0))
+                .filter(PengeluaranOffline.person_id == person_id)
+                .filter(PengeluaranOffline.is_deleted == 0)
+                .scalar()
+            ) or 0.0
+
+            # Cari atau buat ClientReceivable untuk person ini
+            receivable = (
+                self.db.query(ClientReceivable)
+                .filter(ClientReceivable.person_id == person_id)
+                .first()
+            )
+
+            # Hitung total pembayaran yang sudah diterima
+            total_bayar = 0.0
+            if receivable:
+                total_bayar = (
+                    self.db.query(func.coalesce(func.sum(ClientReceivablePayment.nominal_bayar), 0.0))
+                    .filter(ClientReceivablePayment.receivable_id == receivable.id)
+                    .scalar()
+                ) or 0.0
+
+            sisa_baru = max(0.0, total_tagihan - total_bayar)
+
+            if receivable:
+                receivable.nominal = total_tagihan
+                receivable.sisa = sisa_baru
+                receivable.status = 'LUNAS' if sisa_baru <= 0 else 'OPEN'
+            else:
+                if total_tagihan > 0:
+                    receivable = ClientReceivable(
+                        person_id=person_id,
+                        nominal=total_tagihan,
+                        sisa=sisa_baru,
+                        status='LUNAS' if sisa_baru <= 0 else 'OPEN',
+                    )
+                    self.db.add(receivable)
+
+            self.db.commit()
+        except Exception:
+            self.db.rollback()
 
     def submit_operasional(self):
         keterangan = self.ket_op.text().strip()
@@ -1090,8 +1142,10 @@ class CatatanHarianView(QWidget):
         try:
             record = self.db.query(PengeluaranOffline).get(self.selected_off_id)
             if record:
+                person_id = record.person_id  # simpan sebelum hapus
                 record.is_deleted = 1
                 self.db.commit()
+                self._sync_client_receivable(person_id)
                 if hasattr(self, 'notifier') and self.notifier:
                     self.notifier.database_changed.emit()
                 self.load_offline()

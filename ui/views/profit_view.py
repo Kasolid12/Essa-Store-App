@@ -36,10 +36,32 @@ class ProfitSimulationView(QWidget):
             self.notifier.database_changed.connect(self.refresh_harian_tables)
 
     def refresh_harian_tables(self):
-        """Menyegarkan seluruh grid tabel catatan harian jika ada perubahan data di menu lain"""
+        """Menyegarkan dropdown kode produksi jika ada perubahan dari menu lain.
+
+        HANYA reload list — TIDAK menjalankan proses_analisis() otomatis
+        untuk mencegah infinite loop (proses_analisis → save → database_changed → ...).
+        """
         self.db.expire_all()
-        # Masukkan semua fungsi load data harian Anda di bawah ini
-        if hasattr(self, 'load_kode_produksi'): self.load_kode_produksi()
+        prev_kode = self.cb_kode_prod.currentText()
+        self.cb_kode_prod.blockSignals(True)
+        self.cb_kode_prod.clear()
+
+        kodes = self.db.query(DebtEntry.kode_produksi).filter(
+            DebtEntry.kode_produksi.isnot(None)
+        ).distinct().all()
+        kode_list = sorted([k[0] for k in kodes if k[0]], reverse=True)
+
+        if kode_list:
+            self.cb_kode_prod.addItems(kode_list)
+            idx = self.cb_kode_prod.findText(prev_kode)
+            if idx >= 0:
+                self.cb_kode_prod.setCurrentIndex(idx)
+        else:
+            self.cb_kode_prod.addItem("-- Belum ada data produksi --")
+
+        self.cb_kode_prod.blockSignals(False)
+        # TIDAK memanggil proses_analisis() di sini — biarkan
+        # hanya terpicu saat user benar-benar memilih batch.
     
     def setup_ui(self):
         main_layout = QVBoxLayout(self)
@@ -61,13 +83,12 @@ class ProfitSimulationView(QWidget):
         self.cb_kode_prod.setMinimumWidth(300)
         # Diperbaiki: Menggunakan hex color #15151a untuk latar belakang combo box
         self.cb_kode_prod.setStyleSheet(f"background-color: #15151a; color: {Theme.TEXT_MAIN}; padding: 8px; border: 1px solid #2d2d38; border-radius: 4px;")
-        
-        btn_tarik = CyberButton("TARIK DATA & ANALISIS")
-        btn_tarik.clicked.connect(self.proses_analisis)
+        # Auto-analisis saat ganti batch (menggantikan tombol TARIK DATA & ANALISIS)
+        # Gunakan 'activated' bukan 'currentIndexChanged' agar tidak infinite loop
+        self.cb_kode_prod.activated.connect(self.proses_analisis)
 
         filter_lay.addWidget(QLabel("Pilih Kode Produksi:"), 0, Qt.AlignmentFlag.AlignRight)
         filter_lay.addWidget(self.cb_kode_prod, 1)
-        filter_lay.addWidget(btn_tarik, 0)
         main_layout.addWidget(filter_frame)
 
         # --- SECTION 2: DASHBOARD INFO DATA ---
@@ -201,6 +222,9 @@ class ProfitSimulationView(QWidget):
             idx = self.cb_kode_prod.findText(prev_kode)
             if idx >= 0:
                 self.cb_kode_prod.setCurrentIndex(idx)
+            # Auto-analisis untuk batch yang terpilih saat startup
+            # (activated signal tidak dipicu oleh programmatic change)
+            self.proses_analisis()
         else:
             self.cb_kode_prod.addItem("-- Belum ada data produksi --")
 
@@ -354,7 +378,6 @@ class ProfitSimulationView(QWidget):
                 self.lbl_dist_status.setText("Belum Di-Cutting!")
                 self.lbl_dist_status.setStyleSheet("color: #ff5252; font-weight: bold;") # Merah
                 self.reset_result()
-                QMessageBox.warning(self, "Stop", "Batch ini belum masuk proses Cutting!")
                 return # Block karena memang 0 pcs
             
             if total_dist < cut_qty:
@@ -416,7 +439,7 @@ class ProfitSimulationView(QWidget):
         """Upsert hasil kalkulasi batch ke tabel profit_history.
 
         Kunci dedup = debt_entry_id (id MODAL hutang terkecil pada batch), supaya
-        klik 'TARIK DATA & ANALISIS' berulang atau toggle status TIDAK
+        ganti batch berulang atau toggle status TIDAK
         menggandakan baris. Batch tanpa hutang MODAL tetap disimpan sebagai baris
         baru dengan debt_entry_id = None.
         """

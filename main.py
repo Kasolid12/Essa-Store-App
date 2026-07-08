@@ -150,6 +150,40 @@ class ESSAMainWindow(QMainWindow):
 
 if __name__ == "__main__":
     Base.metadata.create_all(bind=engine)
+
+    # --- Startup sync: MasterTarifPenjahit ← TarifMaster ---
+    # Memastikan semua data tarif_jahit tersedia di dropdown Penjahit Payroll
+    from data.database import SessionLocal
+    from data.models.salary import MasterTarifPenjahit
+    from data.models.master import TarifMaster
+    _sync_db = SessionLocal()
+    try:
+        _unsynced = (
+            _sync_db.query(TarifMaster)
+            .filter(
+                TarifMaster.tarif_jahit > 0,
+                ~TarifMaster.kode_sku.in_(
+                    _sync_db.query(MasterTarifPenjahit.kode_garapan).filter(
+                        MasterTarifPenjahit.is_active == 1
+                    )
+                ),
+            )
+            .all()
+        )
+        for _u in _unsynced:
+            _sync_db.add(
+                MasterTarifPenjahit(
+                    kode_garapan=_u.kode_sku,
+                    harga=_u.tarif_jahit,
+                    is_active=1,
+                )
+            )
+        if _unsynced:
+            _sync_db.commit()
+    finally:
+        _sync_db.close()
+    # ------------------------------------------------
+
     app = QApplication(sys.argv)
     window = ESSAMainWindow()
     window.show()
