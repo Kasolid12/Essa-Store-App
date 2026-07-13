@@ -323,7 +323,7 @@ class CatatanHarianView(QWidget):
         self.person_off = QComboBox()
         self.person_off.setEditable(True)
         self.person_off.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
-        self.person_off.lineEdit().setPlaceholderText("Pilih Pembeli/Klien...")
+        self.person_off.lineEdit().setPlaceholderText("Pilih Pembeli/Klien/Supplier...")
         self.setup_completer(self.person_off)
 
         self.sku_off = QComboBox()
@@ -471,7 +471,7 @@ class CatatanHarianView(QWidget):
             text = f"{p.nama} ({p.person_type})"
             if p.person_type in ['PENJAHIT', 'PENGSUP']:
                 self.person_dist.addItem(text, p.id)
-            if p.person_type in ['KLIEN', 'LAINNYA']:
+            if p.person_type in ['KLIEN', 'LAINNYA', 'SUPPLIER']:
                 self.person_off.addItem(text, p.id)
 
     def load_hasil_cutting(self):
@@ -929,11 +929,14 @@ class CatatanHarianView(QWidget):
             QMessageBox.critical(self, "Error", f"Gagal menyimpan: {e}")
 
     def submit_offline(self):
-        person_id = self.get_valid_combo_data(self.person_off, "Pembeli tidak ditemukan! Pilih Klien dari daftar.")
+        person_id = self.get_valid_combo_data(self.person_off, "Pembeli/Supplier tidak ditemukan! Pilih dari daftar.")
         sku_id = self.get_valid_combo_data(self.sku_off, "SKU tidak ditemukan!")
         if not person_id or not sku_id: return
         
         try:
+            # Simpan nama person SEBELUM reset, untuk multiple input
+            saved_person_text = self.person_off.currentText()
+
             if self.selected_off_id:
                 record = self.db.query(PengeluaranOffline).get(self.selected_off_id)
                 record.tanggal = self.date_off.date().toString("yyyy-MM-dd")
@@ -945,17 +948,17 @@ class CatatanHarianView(QWidget):
                 msg = "Data Penjualan berhasil diperbarui!"
             else:
                 record = PengeluaranOffline(
-                    tanggal=self.date_off.date().toString("yyyy-MM-dd"), 
-                    person_id=person_id, 
+                    tanggal=self.date_off.date().toString("yyyy-MM-dd"),
+                    person_id=person_id,
                     sku_id=sku_id,
-                    qty=self.qty_off.value(), 
-                    harga_satuan=self.harga_off.value(), 
-                    total=self.total_off.value(), 
+                    qty=self.qty_off.value(),
+                    harga_satuan=self.harga_off.value(),
+                    total=self.total_off.value(),
                     catatan="Manual Input"
                 )
                 self.db.add(record)
                 msg = "Data Penjualan berhasil disimpan!"
-                
+
             self.db.commit()
             # Sinkron piutang: update ClientReceivable untuk person ini
             self._sync_client_receivable(person_id)
@@ -965,6 +968,9 @@ class CatatanHarianView(QWidget):
             self.load_offline()
             self.apply_search_filter()
             self.reset_offline_form()
+            # Keep nama person setelah reset (hanya mode insert / multiple input)
+            if not self.selected_off_id:
+                self.person_off.setEditText(saved_person_text)
             QMessageBox.information(self, "Sukses", msg)
 
         except Exception as e:
