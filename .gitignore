@@ -1,0 +1,44 @@
+# ── Byte-compiled / cache ──
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# ── Database ──
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+
+# ── Backups ──
+backups/
+
+# ── Exports / generated files ──
+exports/
+
+# ── IDE / Editor ──
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# ── AI / Tool config ──
+.claude/
+
+# ── Temp files ──
+.fuse_hidden*
+~$*
+*.tmp
+*.temp
+
+# ── Data files (Excel, JSON) ──
+*.xlsx
+*.xls
+*.json
+
+# ── OS files ──
+Thumbs.db
+.DS_Store
+Desktop.ini
