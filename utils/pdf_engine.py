@@ -529,18 +529,18 @@ def generate_salary_slip(salary_run_id):
     finally:
         db.close()
 
-def generate_invoice_pdf(sales_data, nama_klien, total_tagihan, sisa_sebelum,
+def generate_invoice_pdf(sales_data, nama_klien, total_tagihan, sisa_piutang,
                         deposit=0, tgl_deposit="-", metode="TUNAI",
                         simpan_deposit=False):
     """
     Generate PDF Invoice dengan format:
-    Sisa Sebelumnya + Transaksi Baru - Deposit = Sisa Baru.
+    Sisa Sebelumnya (dari sisa_piutang - total_tagihan) + Transaksi Baru - Deposit = Sisa Baru.
 
     Args:
         sales_data: list of PengeluaranOffline objects (yang dipilih).
         nama_klien: str — nama klien.
         total_tagihan: float — total dari semua sales_data.
-        sisa_sebelum: float — sisa hutang sebelum transaksi pertama.
+        sisa_piutang: float — sisa piutang klien saat ini (dari ClientReceivable.sisa).
         deposit: float — jumlah deposit (0 jika tidak ada).
         tgl_deposit: str — tanggal deposit.
         metode: str — metode pembayaran (TUNAI/TRANSFER).
@@ -552,7 +552,12 @@ def generate_invoice_pdf(sales_data, nama_klien, total_tagihan, sisa_sebelum,
     from fpdf import FPDF
     import os, datetime
 
-    sisa_baru = max(0.0, sisa_sebelum + total_tagihan - deposit)
+    # Sisa hutang sebelumnya = sisa_piutang - total_tagihan (balance sebelum transaksi baru)
+    sisa_sebelum = max(0.0, sisa_piutang - total_tagihan)
+    # Subtotal = sisa_piutang (total sisa piutang saat ini)
+    subtotal = sisa_piutang
+    # Sisa hutang baru = Subtotal - Deposit
+    sisa_baru = max(0.0, subtotal - deposit)
 
     try:
         BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -644,8 +649,7 @@ def generate_invoice_pdf(sales_data, nama_klien, total_tagihan, sisa_sebelum,
 
     pdf.set_font("Arial", 'B', 10)
     pdf.cell(90, 7, "", 0, 0)
-    pdf.cell(50, 7, "Subtotal", 0, 0, 'R')
-    subtotal = sisa_sebelum + total_tagihan
+    pdf.cell(50, 7, "Subtotal (Sisa Piutang)", 0, 0, 'R')
     pdf.cell(50, 7, f"Rp {subtotal:,.0f}", 0, 1, 'R')
     pdf.ln(2)
 

@@ -627,31 +627,15 @@ class InvoiceView(QWidget):
             simpan_deposit = (reply == QMessageBox.StandardButton.Yes)
 
         try:
-            # --- HITUNG SISA SEBELUMNYA (balance sebelum baris penjualan pertama) ---
-            all_rows = self._get_combined_rows(self.selected_client_id)
-            running = 0.0
-            sisa_sebelum = 0.0
-
-            # Ambil baris pertama yang dipilih
-            first_selected_sort_key = None
-            for r in all_rows:
-                if r["id"].startswith("S"):
-                    # Check if this ID corresponds to a selected row
-                    pass  # We'll compute by iterating
-
-            # Simple approach: compute balance before the first selected sale
-            found_first = False
-            for r in all_rows:
-                if not found_first:
-                    running += r["debit"] - r["credit"]
-                    for sel_row in self.selected_sales:
-                        cell_id = self.table.item(sel_row, 0)
-                        if cell_id and cell_id.text() == r["id"] and r["jenis"] == "Penjualan":
-                            sisa_sebelum = running - r["debit"]  # balance right before this sale
-                            found_first = True
-                            break
-                if found_first:
-                    break
+            # --- HITUNG SISA PIUTANG KLIEN SAAT INI dari database ---
+            receivable = (
+                self.db.query(ClientReceivable)
+                .filter(ClientReceivable.person_id == self.selected_client_id)
+                .first()
+            )
+            sisa_piutang = receivable.sisa if receivable else 0.0
+            # Sisa hutang sebelumnya = sisa_piutang - total transaksi baru
+            sisa_sebelum = max(0.0, sisa_piutang - self.total_tagihan)
 
             # --- SIMPAN DEPOSIT (jika dikonfirmasi) via recalculate ---
             if simpan_deposit:
@@ -723,7 +707,7 @@ class InvoiceView(QWidget):
                 sales_data=sales_data,
                 nama_klien=nama_klien,
                 total_tagihan=self.total_tagihan,
-                sisa_sebelum=sisa_sebelum,
+                sisa_piutang=sisa_piutang,
                 deposit=deposit,
                 tgl_deposit=tanggal,
                 metode=metode,
@@ -737,7 +721,7 @@ class InvoiceView(QWidget):
             self.load_client_data(self.selected_client_id)
             self.ent_deposit.setText("0")
 
-            sisa_baru = max(0.0, sisa_sebelum + self.total_tagihan - deposit)
+            sisa_baru = max(0.0, sisa_piutang - deposit)
             if simpan_deposit:
                 QMessageBox.information(
                     self, "Sukses",
