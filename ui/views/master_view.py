@@ -33,6 +33,7 @@ class MasterDataView(QWidget):
         # Masukkan semua fungsi load data harian Anda di bawah ini
         if hasattr(self, 'load_sku_data'): self.load_sku_data()
         if hasattr(self, 'load_person_data'): self.load_person_data()
+        if hasattr(self, 'client_widget'): self.client_widget.refresh_data()
     
     def setup_ui(self):
         layout = QVBoxLayout(self)
@@ -62,6 +63,7 @@ class MasterDataView(QWidget):
         
         self.setup_sku_tab()
         self.setup_person_tab()
+        self.setup_client_tab()
         self.setup_import_tab()
 
         layout.addWidget(self.tabs)
@@ -318,7 +320,34 @@ class MasterDataView(QWidget):
         self.table_person.clearSelection()
 
     # ==========================================
-    # 3. IMPORT EXCEL TAB SETUP
+    # 3. CLIENT TAB SETUP
+    # ==========================================
+    def setup_client_tab(self):
+        """Setup tab manajemen klien (terpisah dari Person)."""
+        self.tab_client = QWidget()
+        lay = QVBoxLayout(self.tab_client)
+        
+        # Gunakan ClientView sebagai embedded widget
+        from ui.views.client_view import ClientView
+        self.client_widget = ClientView(notifier=self.notifier)
+        
+        # Tombol refresh di header
+        header = QHBoxLayout()
+        title = QLabel("DATA KLIEN (nama, alamat, no HP)")
+        title.setStyleSheet(f"color: {Theme.TEXT_MUTED}; font-weight: bold; font-size: 10pt;")
+        header.addWidget(title)
+        header.addStretch()
+        btn_sync = CyberButton("REFRESH")
+        btn_sync.clicked.connect(self.client_widget.refresh_data)
+        header.addWidget(btn_sync)
+        lay.addLayout(header)
+        
+        lay.addWidget(self.client_widget)
+        self.tab_client.setLayout(lay)
+        self.tabs.addTab(self.tab_client, "KLIEN")
+
+    # ==========================================
+    # 4. IMPORT EXCEL TAB SETUP
     # ==========================================
     def setup_import_tab(self):
         self.tab_import = QWidget()

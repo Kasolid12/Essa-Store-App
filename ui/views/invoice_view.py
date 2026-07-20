@@ -16,7 +16,7 @@ from ui.components.tables import CyberTable
 from ui.components.buttons import CyberButton
 from ui.theme import Theme
 from data.database import SessionLocal
-from data.models import PengeluaranOffline, Person
+from data.models import PengeluaranOffline, Person, Client
 from data.models.invoice import ClientReceivable, ClientReceivablePayment
 from utils.pdf_engine import generate_invoice_pdf
 
@@ -27,6 +27,7 @@ class InvoiceView(QWidget):
         self.db = SessionLocal()
         self.notifier = notifier
         self.selected_client_id = None
+        self.selected_client_type = None
         self.selected_sales = []
         self.total_tagihan = 0.0
         self.total_tagihan_all = 0
@@ -206,13 +207,25 @@ class InvoiceView(QWidget):
     # LOAD CLIENTS
     # ====================================================================
     def load_clients(self):
-        """Muat daftar klien yang memiliki transaksi offline atau piutang."""
+        """Muat daftar klien dari tabel Client + legacy Person (KLIEN/SUPPLIER)."""
         prev_id = self.selected_client_id
 
         self.cb_client.blockSignals(True)
         self.cb_client.clear()
         self.cb_client.addItem("-- Pilih Klien --", None)
 
+        # --- Load dari Client table (baru) ---
+        clients = (
+            self.db.query(Client)
+            .filter(Client.is_deleted == 0)
+            .order_by(Client.nama)
+            .all()
+        )
+        for c in clients:
+            # Simpan dengan prefix CLIENT_ untuk membedakan dari Person legacy
+            self.cb_client.addItem(c.nama, f"CLIENT_{c.id}")
+
+        # --- Load dari Person table (legacy — memiliki transaksi offline atau piutang) ---
         person_ids = (
             self.db.query(PengeluaranOffline.person_id)
             .filter(PengeluaranOffline.is_deleted == 0)
@@ -230,16 +243,16 @@ class InvoiceView(QWidget):
         )
         ids_from_cr = {r[0] for r in cr_ids if r[0]}
 
-        all_ids = ids_from_sales | ids_from_cr
+        all_person_ids = ids_from_sales | ids_from_cr
         persons = (
             self.db.query(Person)
-            .filter(Person.id.in_(all_ids))
+            .filter(Person.id.in_(all_person_ids))
             .order_by(Person.nama)
             .all()
-        ) if all_ids else []
+        ) if all_person_ids else []
 
         for p in persons:
-            self.cb_client.addItem(p.nama, p.id)
+            self.cb_client.addItem(f"{p.nama} (Person)", p.id)
 
         self.cb_client.blockSignals(False)
 
@@ -257,19 +270,43 @@ class InvoiceView(QWidget):
     # ====================================================================
     def on_client_selected(self, idx=None):
         """Dipanggil saat user memilih klien dari dropdown."""
-        self.selected_client_id = self.cb_client.currentData()
-        if not self.selected_client_id:
+        raw = self.cb_client.currentData()
+        if not raw:
+            self.selected_client_id = None
+            self.selected_client_type = None
             self.reset_all()
             return
+        
+        # Deteksi apakah ini Client baru (prefix CLIENT_) atau Person lama
+        if isinstance(raw, str) and raw.startswith("CLIENT_"):
+            self.selected_client_id = int(raw.replace("CLIENT_", ""))
+            self.selected_client_type = "client"
+        else:
+            self.selected_client_id = raw
+            self.selected_client_type = "person"
+        
         self.load_client_data(self.selected_client_id)
 
-    def load_client_data(self, person_id):
+    def _get_filter_field(self, field_type="sales"):
+        """Kembalikan field filter yang sesuai berdasarkan tipe klien."""
+        if getattr(self, 'selected_client_type', None) == "client":
+            if field_type == "sales":
+                return PengeluaranOffline.client_id
+            else:
+                return ClientReceivable.client_id
+        else:
+            if field_type == "sales":
+                return PengeluaranOffline.person_id
+            else:
+                return ClientReceivable.person_id
+
+    def load_client_data(self, ref_id):
         """Muat kombinasi tabel + summary untuk satu klien."""
-        self.selected_client_id = person_id
+        self.selected_client_id = ref_id
         # Self-healing: recalculate receivable dari data nyata setiap load
-        self._recalculate_receivable(person_id)
-        self.load_combined_table(person_id)
-        self.load_summary(person_id)
+        self._recalculate_receivable(ref_id)
+        self.load_combined_table(ref_id)
+        self.load_summary(ref_id)
         # Set deposit default, reset selection
         self.ent_deposit.setText("0")
         self.date_deposit.setDate(QDate.currentDate())
@@ -367,34 +404,47 @@ class InvoiceView(QWidget):
                 status_item.setForeground(QColor("#F44336"))
             self.table.setItem(i, 6, status_item)
 
-    def _get_combined_rows(self, person_id):
+    def _get_combined_rows(self, ref_id):
         """Query + sort penjualan & pembayaran jadi list of dict."""
+        sales_filter = self._get_filter_field("sales")
         rows = []
+        client_name = ""
 
-        # Penjualan offline
+        # Penjualan offline — gunakan filter yang sesuai
         sales = (
             self.db.query(PengeluaranOffline)
-            .filter(PengeluaranOffline.person_id == person_id)
+            .filter(sales_filter == ref_id)
             .filter(PengeluaranOffline.is_deleted == 0)
             .order_by(PengeluaranOffline.tanggal, PengeluaranOffline.id)
             .all()
         )
         for s in sales:
             sku = s.sku.kode_sku if s.sku else "-"
+            qty_str = f"{int(s.qty)}" if s.qty == int(s.qty) else f"{s.qty:g}"
+            # Ambil nama dari client atau person
+            if s.client:
+                nama_pembeli = s.client.nama
+            elif s.person:
+                nama_pembeli = s.person.nama
+            else:
+                nama_pembeli = ""
             rows.append({
                 "id": f"S{s.id}",
                 "sort_key": (s.tanggal, 0, s.id),
                 "tanggal": s.tanggal,
                 "jenis": "Penjualan",
-                "keterangan": f"{sku} x{s.qty}  |  {s.person.nama if s.person else ''}",
+                "keterangan": f"{sku} x{qty_str}  |  {nama_pembeli}",
                 "debit": float(s.total),
                 "credit": 0.0,
             })
+            if nama_pembeli:
+                client_name = nama_pembeli
 
-        # Pembayaran
+        # Pembayaran — gunakan filter yang sesuai
+        receivable_filter = self._get_filter_field("receivable")
         receivable = (
             self.db.query(ClientReceivable)
-            .filter(ClientReceivable.person_id == person_id)
+            .filter(receivable_filter == ref_id)
             .first()
         )
         if receivable:
@@ -422,11 +472,14 @@ class InvoiceView(QWidget):
     # ====================================================================
     # SUMMARY
     # ====================================================================
-    def load_summary(self, person_id):
+    def load_summary(self, ref_id):
         """Hitung ringkasan piutang."""
+        sales_filter = self._get_filter_field("sales")
+        receivable_filter = self._get_filter_field("receivable")
+
         total_all = (
             self.db.query(func.coalesce(func.sum(PengeluaranOffline.total), 0.0))
-            .filter(PengeluaranOffline.person_id == person_id)
+            .filter(sales_filter == ref_id)
             .filter(PengeluaranOffline.is_deleted == 0)
             .scalar()
         ) or 0.0
@@ -434,7 +487,7 @@ class InvoiceView(QWidget):
 
         receivable = (
             self.db.query(ClientReceivable)
-            .filter(ClientReceivable.person_id == person_id)
+            .filter(receivable_filter == ref_id)
             .first()
         )
 
@@ -555,18 +608,21 @@ class InvoiceView(QWidget):
         except Exception:
             return 0.0
 
-    def _recalculate_receivable(self, person_id):
+    def _recalculate_receivable(self, ref_id):
         """Hitung ulang ClientReceivable dari total penjualan & pembayaran nyata."""
+        sales_filter = self._get_filter_field("sales")
+        receivable_filter = self._get_filter_field("receivable")
+
         total_tagihan = (
             self.db.query(func.coalesce(func.sum(PengeluaranOffline.total), 0.0))
-            .filter(PengeluaranOffline.person_id == person_id)
+            .filter(sales_filter == ref_id)
             .filter(PengeluaranOffline.is_deleted == 0)
             .scalar()
         ) or 0.0
 
         receivable = (
             self.db.query(ClientReceivable)
-            .filter(ClientReceivable.person_id == person_id)
+            .filter(receivable_filter == ref_id)
             .first()
         )
 
@@ -586,12 +642,16 @@ class InvoiceView(QWidget):
             receivable.status = 'LUNAS' if sisa_baru <= 0 else 'OPEN'
         else:
             if total_tagihan > 0:
-                receivable = ClientReceivable(
-                    person_id=person_id,
-                    nominal=total_tagihan,
-                    sisa=sisa_baru,
-                    status='OPEN' if sisa_baru > 0 else 'LUNAS',
-                )
+                kwargs = {
+                    'nominal': total_tagihan,
+                    'sisa': sisa_baru,
+                    'status': 'OPEN' if sisa_baru > 0 else 'LUNAS',
+                }
+                if self.selected_client_type == "client":
+                    kwargs['client_id'] = ref_id
+                else:
+                    kwargs['person_id'] = ref_id
+                receivable = ClientReceivable(**kwargs)
                 self.db.add(receivable)
 
         self.db.commit()
@@ -627,38 +687,43 @@ class InvoiceView(QWidget):
             simpan_deposit = (reply == QMessageBox.StandardButton.Yes)
 
         try:
+            receivable_filter = self._get_filter_field("receivable")
+
             # --- HITUNG SISA PIUTANG KLIEN SAAT INI dari database ---
             receivable = (
                 self.db.query(ClientReceivable)
-                .filter(ClientReceivable.person_id == self.selected_client_id)
+                .filter(receivable_filter == self.selected_client_id)
                 .first()
             )
             sisa_piutang = receivable.sisa if receivable else 0.0
-            # Sisa hutang sebelumnya = sisa_piutang - total transaksi baru
-            sisa_sebelum = max(0.0, sisa_piutang - self.total_tagihan)
 
             # --- SIMPAN DEPOSIT (jika dikonfirmasi) via recalculate ---
             if simpan_deposit:
                 receivable = (
                     self.db.query(ClientReceivable)
-                    .filter(ClientReceivable.person_id == self.selected_client_id)
+                    .filter(receivable_filter == self.selected_client_id)
                     .first()
                 )
 
                 if not receivable:
                     # Buat receivable dulu baru bisa tambah payment
+                    sales_filter = self._get_filter_field("sales")
                     total_tagihan = (
                         self.db.query(func.coalesce(func.sum(PengeluaranOffline.total), 0.0))
-                        .filter(PengeluaranOffline.person_id == self.selected_client_id)
+                        .filter(sales_filter == self.selected_client_id)
                         .filter(PengeluaranOffline.is_deleted == 0)
                         .scalar()
                     ) or 0.0
-                    receivable = ClientReceivable(
-                        person_id=self.selected_client_id,
-                        nominal=total_tagihan,
-                        sisa=total_tagihan,
-                        status='OPEN',
-                    )
+                    kwargs = {
+                        'nominal': total_tagihan,
+                        'sisa': total_tagihan,
+                        'status': 'OPEN',
+                    }
+                    if self.selected_client_type == "client":
+                        kwargs['client_id'] = self.selected_client_id
+                    else:
+                        kwargs['person_id'] = self.selected_client_id
+                    receivable = ClientReceivable(**kwargs)
                     self.db.add(receivable)
                     self.db.flush()
 
@@ -675,7 +740,6 @@ class InvoiceView(QWidget):
 
                 if self.notifier:
                     self.notifier.database_changed.emit()
-            # else: tidak menyimpan deposit — langsung cetak
 
             # --- QUERY SALES DATA UNTUK PDF ---
             selected_ids = []
@@ -700,9 +764,26 @@ class InvoiceView(QWidget):
                 QMessageBox.warning(self, "Error", "Tidak ada data penjualan untuk dicetak.")
                 return
 
-            nama_klien = sales_data[0].person.nama if sales_data[0].person else "Unknown"
+            # --- Ambil data klien (nama, alamat, telp) untuk PDF ---
+            nama_klien = "Unknown"
+            alamat_klien = None
+            telp_klien = None
 
-            # --- CETAK PDF via pdf_engine ---
+            if self.selected_client_type == "client":
+                client = self.db.query(Client).get(self.selected_client_id)
+                if client:
+                    nama_klien = client.nama
+                    alamat_klien = client.alamat
+                    telp_klien = client.no_hp
+            else:
+                # Fallback ke Person (legacy)
+                person = self.db.query(Person).get(self.selected_client_id)
+                if person:
+                    nama_klien = person.nama
+                    alamat_klien = person.alamat
+                    telp_klien = person.no_hp
+
+            # --- CETAK PDF via pdf_engine (dengan data klien lengkap) ---
             out_path = generate_invoice_pdf(
                 sales_data=sales_data,
                 nama_klien=nama_klien,
@@ -712,6 +793,8 @@ class InvoiceView(QWidget):
                 tgl_deposit=tanggal,
                 metode=metode,
                 simpan_deposit=simpan_deposit,
+                alamat_klien=alamat_klien,
+                telp_klien=telp_klien,
             )
 
             os.startfile(out_path)

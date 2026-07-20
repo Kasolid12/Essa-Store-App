@@ -68,10 +68,11 @@ class PengeluaranOffline(Base):
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     tanggal: Mapped[str] = mapped_column(String, nullable=False)
     sku_id: Mapped[int] = mapped_column(ForeignKey("sku_master.id"), nullable=False)
-    qty: Mapped[int] = mapped_column(Integer, nullable=False)
+    qty: Mapped[float] = mapped_column(Float, nullable=False)
     harga_satuan: Mapped[float] = mapped_column(Float, nullable=False) # Snapshot from sku_master.harga_jual
     total: Mapped[float] = mapped_column(Float, nullable=False)
-    person_id: Mapped[Optional[int]] = mapped_column(ForeignKey("persons.id")) # Pembeli/Klien
+    person_id: Mapped[Optional[int]] = mapped_column(ForeignKey("persons.id")) # Legacy: Pembeli/Klien (Person)
+    client_id: Mapped[Optional[int]] = mapped_column(ForeignKey("clients.id")) # Pembeli/Klien (Client)
     catatan: Mapped[Optional[str]] = mapped_column(String)
     
     is_deleted: Mapped[int] = mapped_column(Integer, default=0)
@@ -79,3 +80,4 @@ class PengeluaranOffline(Base):
 
     sku = relationship("SkuMaster")
     person = relationship("Person")
+    client = relationship("Client")

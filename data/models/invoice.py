@@ -51,7 +51,8 @@ class ClientReceivable(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     invoice_id: Mapped[Optional[int]] = mapped_column(ForeignKey("invoices.id"))
-    person_id: Mapped[int] = mapped_column(ForeignKey("persons.id"), nullable=False, index=True)
+    person_id: Mapped[Optional[int]] = mapped_column(ForeignKey("persons.id"), index=True) # Legacy
+    client_id: Mapped[Optional[int]] = mapped_column(ForeignKey("clients.id"), index=True) # Pengganti
     
     nominal: Mapped[float] = mapped_column(Float, nullable=False)
     sisa: Mapped[float] = mapped_column(Float, nullable=False)
@@ -60,6 +61,7 @@ class ClientReceivable(Base):
 
     invoice = relationship("Invoice", back_populates="receivable")
     person = relationship("Person")
+    client = relationship("Client")
     payments: Mapped[List["ClientReceivablePayment"]] = relationship("ClientReceivablePayment", back_populates="receivable")
 
 class ClientReceivablePayment(Base):

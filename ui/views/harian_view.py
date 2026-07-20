@@ -12,7 +12,7 @@ from ui.components.tables import CyberTable
 from ui.components.buttons import CyberButton
 from ui.theme import Theme
 from data.database import SessionLocal
-from data.models import HasilCutting, DistribusiCutting, PengeluaranOffline, ModalOperasional, SkuMaster, Person
+from data.models import HasilCutting, DistribusiCutting, PengeluaranOffline, ModalOperasional, SkuMaster, Person, Client
 from data.models.debt import DebtEntry
 from data.models.invoice import ClientReceivable, ClientReceivablePayment
 
@@ -332,8 +332,10 @@ class CatatanHarianView(QWidget):
         self.sku_off.lineEdit().setPlaceholderText("Ketik SKU...")
         self.setup_completer(self.sku_off)
         
-        self.qty_off = QSpinBox()
-        self.qty_off.setRange(1, 99999)
+        self.qty_off = QDoubleSpinBox()
+        self.qty_off.setRange(0.001, 999999.999)
+        self.qty_off.setDecimals(2)
+        self.qty_off.setSingleStep(0.1)
         self.qty_off.valueChanged.connect(self.calculate_offline_total)
         
         self.harga_off = QDoubleSpinBox()
@@ -474,6 +476,12 @@ class CatatanHarianView(QWidget):
             if p.person_type in ['KLIEN', 'LAINNYA', 'SUPPLIER']:
                 self.person_off.addItem(text, p.id)
 
+        # Tambahkan data dari tabel Client (model baru)
+        clients = self.db.query(Client).filter(Client.is_deleted == 0).order_by(Client.nama).all()
+        for c in clients:
+            text = f"{c.nama} (KLIEN)"
+            self.person_off.addItem(text, f"CLIENT_{c.id}")  # Prefix untuk membedakan
+
     def load_hasil_cutting(self):
         records = self.db.query(HasilCutting).filter(HasilCutting.is_deleted == 0).order_by(HasilCutting.tanggal.desc(), HasilCutting.id.desc()).limit(100).all()
         self.table_cutting.setRowCount(len(records))
@@ -512,14 +520,21 @@ class CatatanHarianView(QWidget):
             self.table_distribusi.setItem(row, 6, qty_item)
 
     def load_offline(self):
-        records = self.db.query(PengeluaranOffline).filter(PengeluaranOffline.is_deleted == 0).order_by(PengeluaranOffline.tanggal.desc(), PengeluaranOffline.id.desc()).limit(100).all()
+        records = self.db.query(PengeluaranOffline).filter(PengeluaranOffline.is_deleted == 0).order_by(PengeluaranOffline.tanggal.desc(), PengeluaranOffline.id.desc()).all()
         self.table_offline.setRowCount(len(records))
         for row, rec in enumerate(records):
             self.table_offline.setItem(row, 0, QTableWidgetItem(str(rec.id)))
             self.table_offline.setItem(row, 1, QTableWidgetItem(rec.tanggal))
-            self.table_offline.setItem(row, 2, QTableWidgetItem(rec.person.nama if rec.person else "Unknown"))
+            if rec.person:
+                nama_pembeli = rec.person.nama
+            elif rec.client:
+                nama_pembeli = rec.client.nama
+            else:
+                nama_pembeli = "Unknown"
+            self.table_offline.setItem(row, 2, QTableWidgetItem(nama_pembeli))
             self.table_offline.setItem(row, 3, QTableWidgetItem(rec.sku.kode_sku if rec.sku else "Unknown"))
-            qty_item = QTableWidgetItem(str(rec.qty))
+            qty_str = f"{int(rec.qty)}" if rec.qty == int(rec.qty) else f"{rec.qty:g}"
+            qty_item = QTableWidgetItem(qty_str)
             qty_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
             self.table_offline.setItem(row, 4, qty_item)
             harga_item = QTableWidgetItem(f"{rec.harga_satuan:,.0f}")
@@ -708,7 +723,10 @@ class CatatanHarianView(QWidget):
         if record:
             self.date_off.setDate(QDate.fromString(record.tanggal, "yyyy-MM-dd"))
             
+            # Cek person_id dulu, lalu fallback ke client_id (CLIENT_ prefix)
             idx_person = self.person_off.findData(record.person_id)
+            if idx_person < 0 and record.client_id:
+                idx_person = self.person_off.findData(f"CLIENT_{record.client_id}")
             if idx_person >= 0: self.person_off.setCurrentIndex(idx_person)
             
             idx_sku = self.sku_off.findData(record.sku_id)
@@ -929,10 +947,18 @@ class CatatanHarianView(QWidget):
             QMessageBox.critical(self, "Error", f"Gagal menyimpan: {e}")
 
     def submit_offline(self):
-        person_id = self.get_valid_combo_data(self.person_off, "Pembeli/Supplier tidak ditemukan! Pilih dari daftar.")
+        raw_id = self.get_valid_combo_data(self.person_off, "Pembeli/Supplier tidak ditemukan! Pilih dari daftar.")
         sku_id = self.get_valid_combo_data(self.sku_off, "SKU tidak ditemukan!")
-        if not person_id or not sku_id: return
+        if not raw_id or not sku_id: return
         
+        # Deteksi apakah ini Client baru (prefix CLIENT_) atau Person lama
+        person_id = None
+        client_id = None
+        if isinstance(raw_id, str) and raw_id.startswith("CLIENT_"):
+            client_id = int(raw_id.replace("CLIENT_", ""))
+        else:
+            person_id = raw_id
+
         try:
             # Simpan nama person SEBELUM reset, untuk multiple input
             saved_person_text = self.person_off.currentText()
@@ -941,6 +967,7 @@ class CatatanHarianView(QWidget):
                 record = self.db.query(PengeluaranOffline).get(self.selected_off_id)
                 record.tanggal = self.date_off.date().toString("yyyy-MM-dd")
                 record.person_id = person_id
+                record.client_id = client_id
                 record.sku_id = sku_id
                 record.qty = self.qty_off.value()
                 record.harga_satuan = self.harga_off.value()
@@ -950,6 +977,7 @@ class CatatanHarianView(QWidget):
                 record = PengeluaranOffline(
                     tanggal=self.date_off.date().toString("yyyy-MM-dd"),
                     person_id=person_id,
+                    client_id=client_id,
                     sku_id=sku_id,
                     qty=self.qty_off.value(),
                     harga_satuan=self.harga_off.value(),
@@ -960,8 +988,8 @@ class CatatanHarianView(QWidget):
                 msg = "Data Penjualan berhasil disimpan!"
 
             self.db.commit()
-            # Sinkron piutang: update ClientReceivable untuk person ini
-            self._sync_client_receivable(person_id)
+            # Sinkron piutang: update ClientReceivable untuk person/client ini
+            self._sync_client_receivable(person_id, client_id)
             if hasattr(self, 'notifier') and self.notifier:
                 print("[*] Broadcasting database changes to all menus...")
                 self.notifier.database_changed.emit()
@@ -978,22 +1006,39 @@ class CatatanHarianView(QWidget):
             self.db.expire_all()
             QMessageBox.critical(self, "Error", f"Gagal: {e}")
 
-    def _sync_client_receivable(self, person_id):
-        """Sinkron ClientReceivable untuk person_id berdasarkan total penjualan offline
-        dan total pembayaran yang sudah tercatat."""
+    def _sync_client_receivable(self, person_id=None, client_id=None):
+        """Sinkron ClientReceivable untuk person_id atau client_id.
+        
+        Args:
+            person_id: int or None — legacy Person ID
+            client_id: int or None — new Client ID
+        """
         try:
+            # Tentukan filter berdasarkan ID mana yang tersedia
+            if client_id:
+                filter_field = PengeluaranOffline.client_id
+                receivable_filter = ClientReceivable.client_id
+                ref_id = client_id
+            else:
+                filter_field = PengeluaranOffline.person_id
+                receivable_filter = ClientReceivable.person_id
+                ref_id = person_id
+
+            if not ref_id:
+                return
+
             # Hitung total penjualan offline (aktif, belum dihapus)
             total_tagihan = (
                 self.db.query(func.coalesce(func.sum(PengeluaranOffline.total), 0.0))
-                .filter(PengeluaranOffline.person_id == person_id)
+                .filter(filter_field == ref_id)
                 .filter(PengeluaranOffline.is_deleted == 0)
                 .scalar()
             ) or 0.0
 
-            # Cari atau buat ClientReceivable untuk person ini
+            # Cari ClientReceivable
             receivable = (
                 self.db.query(ClientReceivable)
-                .filter(ClientReceivable.person_id == person_id)
+                .filter(receivable_filter == ref_id)
                 .first()
             )
 
@@ -1014,12 +1059,16 @@ class CatatanHarianView(QWidget):
                 receivable.status = 'LUNAS' if sisa_baru <= 0 else 'OPEN'
             else:
                 if total_tagihan > 0:
-                    receivable = ClientReceivable(
-                        person_id=person_id,
-                        nominal=total_tagihan,
-                        sisa=sisa_baru,
-                        status='LUNAS' if sisa_baru <= 0 else 'OPEN',
-                    )
+                    kwargs = {
+                        'nominal': total_tagihan,
+                        'sisa': sisa_baru,
+                        'status': 'LUNAS' if sisa_baru <= 0 else 'OPEN',
+                    }
+                    if client_id:
+                        kwargs['client_id'] = client_id
+                    else:
+                        kwargs['person_id'] = person_id
+                    receivable = ClientReceivable(**kwargs)
                     self.db.add(receivable)
 
             self.db.commit()
@@ -1149,9 +1198,10 @@ class CatatanHarianView(QWidget):
             record = self.db.query(PengeluaranOffline).get(self.selected_off_id)
             if record:
                 person_id = record.person_id  # simpan sebelum hapus
+                client_id = record.client_id  # simpan sebelum hapus
                 record.is_deleted = 1
                 self.db.commit()
-                self._sync_client_receivable(person_id)
+                self._sync_client_receivable(person_id, client_id)
                 if hasattr(self, 'notifier') and self.notifier:
                     self.notifier.database_changed.emit()
                 self.load_offline()
