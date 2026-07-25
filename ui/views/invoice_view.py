@@ -14,6 +14,7 @@ from PySide6.QtGui import QColor
 
 from ui.components.tables import CyberTable
 from ui.components.buttons import CyberButton
+from ui.components.dialogs import CopyableErrorDialog
 from ui.theme import Theme
 from data.database import SessionLocal
 from data.models import PengeluaranOffline, Person, Client
@@ -151,36 +152,63 @@ class InvoiceView(QWidget):
         sep.setStyleSheet("background-color: #2d2d38;")
         bottom_lay.addWidget(sep)
 
-        # --- DEPOSIT + ACTION ROW ---
-        deposit_row = QHBoxLayout()
-        deposit_row.setSpacing(10)
-        deposit_row.addWidget(QLabel("Deposit (Rp):"))
+        # --- BARIS 1: DEPOSIT + DISKON + JATUH TEMPO ---
+        invoice_opt_row = QHBoxLayout()
+        invoice_opt_row.setSpacing(10)
+
+        invoice_opt_row.addWidget(QLabel("Deposit (Rp):"))
         self.ent_deposit = QLineEdit("0")
         self.ent_deposit.setStyleSheet(
-            f"font-size: 14pt; font-weight: bold; background: {Theme.BG_VOID};"
+            f"font-size: 12pt; font-weight: bold; background: {Theme.BG_VOID};"
             f" color: {Theme.TEXT_MAIN}; padding: 4px;"
         )
-        self.ent_deposit.setMaximumWidth(150)
-        deposit_row.addWidget(self.ent_deposit)
+        self.ent_deposit.setMaximumWidth(130)
+        invoice_opt_row.addWidget(self.ent_deposit)
 
-        deposit_row.addWidget(QLabel("Tgl:"))
+        invoice_opt_row.addWidget(QLabel("Diskon (Rp):"))
+        self.ent_diskon = QLineEdit("0")
+        self.ent_diskon.setStyleSheet(
+            f"font-size: 12pt; font-weight: bold; background: {Theme.BG_VOID};"
+            f" color: {Theme.NEON_PINK}; padding: 4px;"
+        )
+        self.ent_diskon.setMaximumWidth(120)
+        invoice_opt_row.addWidget(self.ent_diskon)
+
+        invoice_opt_row.addWidget(QLabel("Tgl Dep:"))
         self.date_deposit = QDateEdit()
         self.date_deposit.setDate(QDate.currentDate())
         self.date_deposit.setCalendarPopup(True)
         self.date_deposit.setStyleSheet(
             f"background: {Theme.BG_VOID}; color: {Theme.TEXT_MAIN}; padding: 4px;"
         )
-        deposit_row.addWidget(self.date_deposit)
+        self.date_deposit.setMaximumWidth(130)
+        invoice_opt_row.addWidget(self.date_deposit)
 
-        deposit_row.addWidget(QLabel("Metode:"))
+        invoice_opt_row.addWidget(QLabel("Jatuh Tempo:"))
+        self.date_jatuh_tempo = QDateEdit()
+        self.date_jatuh_tempo.setDate(QDate.currentDate().addDays(30))
+        self.date_jatuh_tempo.setCalendarPopup(True)
+        self.date_jatuh_tempo.setStyleSheet(
+            f"background: {Theme.BG_VOID}; color: {Theme.NEON_YELLOW}; padding: 4px;"
+        )
+        self.date_jatuh_tempo.setMaximumWidth(130)
+        invoice_opt_row.addWidget(self.date_jatuh_tempo)
+
+        invoice_opt_row.addWidget(QLabel("Metode:"))
         self.cb_metode = QComboBox()
         self.cb_metode.addItems(["TUNAI", "TRANSFER"])
         self.cb_metode.setStyleSheet(
             f"background: #15151a; color: {Theme.TEXT_MAIN}; padding: 4px;"
         )
-        deposit_row.addWidget(self.cb_metode)
+        self.cb_metode.setMaximumWidth(100)
+        invoice_opt_row.addWidget(self.cb_metode)
 
-        deposit_row.addStretch()
+        invoice_opt_row.addStretch()
+        bottom_lay.addLayout(invoice_opt_row)
+
+        # --- BARIS 2: ACTION BUTTONS ---
+        action_row = QHBoxLayout()
+        action_row.setSpacing(10)
 
         self.btn_print = CyberButton("CETAK INVOICE PDF")
         self.btn_print.setStyleSheet(
@@ -189,7 +217,7 @@ class InvoiceView(QWidget):
         )
         self.btn_print.setEnabled(False)
         self.btn_print.clicked.connect(self._save_and_print)
-        deposit_row.addWidget(self.btn_print)
+        action_row.addWidget(self.btn_print)
 
         self.btn_hapus_payment = CyberButton("HAPUS PEMBAYARAN")
         self.btn_hapus_payment.setStyleSheet(
@@ -198,9 +226,10 @@ class InvoiceView(QWidget):
         )
         self.btn_hapus_payment.setEnabled(False)
         self.btn_hapus_payment.clicked.connect(self.delete_selected_payment)
-        deposit_row.addWidget(self.btn_hapus_payment)
+        action_row.addWidget(self.btn_hapus_payment)
 
-        bottom_lay.addLayout(deposit_row)
+        action_row.addStretch()
+        bottom_lay.addLayout(action_row)
         layout.addWidget(bottom_frame)
 
     # ====================================================================
@@ -303,13 +332,34 @@ class InvoiceView(QWidget):
     def load_client_data(self, ref_id):
         """Muat kombinasi tabel + summary untuk satu klien."""
         self.selected_client_id = ref_id
-        # Self-healing: recalculate receivable dari data nyata setiap load
-        self._recalculate_receivable(ref_id)
-        self.load_combined_table(ref_id)
-        self.load_summary(ref_id)
-        # Set deposit default, reset selection
+        try:
+            # Self-healing: recalculate receivable dari data nyata setiap load
+            self._recalculate_receivable(ref_id)
+            self.load_combined_table(ref_id)
+            self.load_summary(ref_id)
+        except Exception as e:
+            # Safety net: rollback jika ada error database
+            self.db.rollback()
+            self.db.expire_all()
+            # Tampilkan tabel kosong daripada crash
+            self.table.setRowCount(0)
+            self.lbl_total_tagihan.setText("Rp 0")
+            self.lbl_total_bayar.setText("Rp 0")
+            self.lbl_sisa.setText("Rp 0")
+            self.lbl_status.setText("ERROR")
+            self.lbl_status.setStyleSheet(
+                f"font-size: 14pt; font-weight: bold; color: {Theme.NEON_PINK};"
+            )
+            QMessageBox.warning(
+                self, "Error Database",
+                f"Gagal memuat data klien:\n{str(e)}\n\n"
+                f"Silakan coba refresh data atau pilih klien lain."
+            )
+        # Set deposit default, reset selection (dijalankan di luar try)
         self.ent_deposit.setText("0")
+        self.ent_diskon.setText("0")
         self.date_deposit.setDate(QDate.currentDate())
+        self.date_jatuh_tempo.setDate(QDate.currentDate().addDays(30))
         self.selected_sales = []
 
     # ====================================================================
@@ -578,6 +628,7 @@ class InvoiceView(QWidget):
         self.btn_print.setEnabled(False)
         self.btn_hapus_payment.setEnabled(False)
         self.ent_deposit.setText("0")
+        self.ent_diskon.setText("0")
 
     def reset_all(self):
         """Reset saat tidak ada klien dipilih."""
@@ -595,6 +646,8 @@ class InvoiceView(QWidget):
         self.btn_print.setEnabled(False)
         self.btn_hapus_payment.setEnabled(False)
         self.ent_deposit.setText("0")
+        self.ent_diskon.setText("0")
+        self.date_jatuh_tempo.setDate(QDate.currentDate().addDays(30))
 
     # ====================================================================
     # CLEAN RUPIAH
@@ -613,49 +666,54 @@ class InvoiceView(QWidget):
         sales_filter = self._get_filter_field("sales")
         receivable_filter = self._get_filter_field("receivable")
 
-        total_tagihan = (
-            self.db.query(func.coalesce(func.sum(PengeluaranOffline.total), 0.0))
-            .filter(sales_filter == ref_id)
-            .filter(PengeluaranOffline.is_deleted == 0)
-            .scalar()
-        ) or 0.0
-
-        receivable = (
-            self.db.query(ClientReceivable)
-            .filter(receivable_filter == ref_id)
-            .first()
-        )
-
-        total_bayar = 0.0
-        if receivable:
-            total_bayar = (
-                self.db.query(func.coalesce(func.sum(ClientReceivablePayment.nominal_bayar), 0.0))
-                .filter(ClientReceivablePayment.receivable_id == receivable.id)
+        try:
+            total_tagihan = (
+                self.db.query(func.coalesce(func.sum(PengeluaranOffline.total), 0.0))
+                .filter(sales_filter == ref_id)
+                .filter(PengeluaranOffline.is_deleted == 0)
                 .scalar()
             ) or 0.0
 
-        sisa_baru = max(0.0, total_tagihan - total_bayar)
+            receivable = (
+                self.db.query(ClientReceivable)
+                .filter(receivable_filter == ref_id)
+                .first()
+            )
 
-        if receivable:
-            receivable.nominal = total_tagihan
-            receivable.sisa = sisa_baru
-            receivable.status = 'LUNAS' if sisa_baru <= 0 else 'OPEN'
-        else:
-            if total_tagihan > 0:
-                kwargs = {
-                    'nominal': total_tagihan,
-                    'sisa': sisa_baru,
-                    'status': 'OPEN' if sisa_baru > 0 else 'LUNAS',
-                }
-                if self.selected_client_type == "client":
-                    kwargs['client_id'] = ref_id
-                else:
-                    kwargs['person_id'] = ref_id
-                receivable = ClientReceivable(**kwargs)
-                self.db.add(receivable)
+            total_bayar = 0.0
+            if receivable:
+                total_bayar = (
+                    self.db.query(func.coalesce(func.sum(ClientReceivablePayment.nominal_bayar), 0.0))
+                    .filter(ClientReceivablePayment.receivable_id == receivable.id)
+                    .scalar()
+                ) or 0.0
 
-        self.db.commit()
-        return receivable
+            sisa_baru = max(0.0, total_tagihan - total_bayar)
+
+            if receivable:
+                receivable.nominal = total_tagihan
+                receivable.sisa = sisa_baru
+                receivable.status = 'LUNAS' if sisa_baru <= 0 else 'OPEN'
+            else:
+                if total_tagihan > 0:
+                    kwargs = {
+                        'nominal': total_tagihan,
+                        'sisa': sisa_baru,
+                        'status': 'OPEN' if sisa_baru > 0 else 'LUNAS',
+                    }
+                    if self.selected_client_type == "client":
+                        kwargs['client_id'] = ref_id
+                    else:
+                        kwargs['person_id'] = ref_id
+                    receivable = ClientReceivable(**kwargs)
+                    self.db.add(receivable)
+
+            self.db.commit()
+            return receivable
+
+        except Exception:
+            self.db.rollback()
+            raise  # Biarkan caller (load_client_data) yang handle dan tampilkan pesan
 
     # ====================================================================
     # SAVE DEPOSIT + PRINT INVOICE PDF
@@ -783,6 +841,12 @@ class InvoiceView(QWidget):
                     alamat_klien = person.alamat
                     telp_klien = person.no_hp
 
+            diskon = self.clean_rupiah(self.ent_diskon.text())
+            if diskon < 0:
+                QMessageBox.warning(self, "Error", "Diskon tidak boleh minus!")
+                return
+            tgl_jatuh_tempo = self.date_jatuh_tempo.date().toString("dd/MM/yyyy")
+
             # --- CETAK PDF via pdf_engine (dengan data klien lengkap) ---
             out_path = generate_invoice_pdf(
                 sales_data=sales_data,
@@ -795,6 +859,8 @@ class InvoiceView(QWidget):
                 simpan_deposit=simpan_deposit,
                 alamat_klien=alamat_klien,
                 telp_klien=telp_klien,
+                tgl_jatuh_tempo=tgl_jatuh_tempo,
+                diskon=diskon,
             )
 
             os.startfile(out_path)
@@ -803,6 +869,7 @@ class InvoiceView(QWidget):
             # --- REFRESH ---
             self.load_client_data(self.selected_client_id)
             self.ent_deposit.setText("0")
+            self.ent_diskon.setText("0")
 
             sisa_baru = max(0.0, sisa_piutang - deposit)
             if simpan_deposit:
@@ -821,10 +888,10 @@ class InvoiceView(QWidget):
         except Exception as e:
             self.db.rollback()
             self.db.expire_all()
-            QMessageBox.critical(
+            CopyableErrorDialog(
                 self, "Error",
-                f"Gagal memproses invoice:\n{str(e)}\n\n{traceback.format_exc()}"
-            )
+                f"Gagal memproses invoice:\n\n{str(e)}\n\n--- FULL TRACEBACK ---\n{traceback.format_exc()}"
+            ).exec()
 
     # ====================================================================
     # EXPORT EXCEL
@@ -884,10 +951,10 @@ class InvoiceView(QWidget):
         except Exception as e:
             self.db.rollback()
             self.db.expire_all()
-            QMessageBox.critical(
+            CopyableErrorDialog(
                 self, "Error",
-                f"Gagal menghapus pembayaran:\n{str(e)}\n\n{traceback.format_exc()}"
-            )
+                f"Gagal menghapus pembayaran:\n\n{str(e)}\n\n--- FULL TRACEBACK ---\n{traceback.format_exc()}"
+            ).exec()
 
     # ====================================================================
     # CLOSE
