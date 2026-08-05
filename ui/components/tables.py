@@ -3,7 +3,7 @@ from PySide6.QtWidgets import QTableWidget, QHeaderView, QAbstractItemView
 from PySide6.QtCore import Qt
 
 class CyberTable(QTableWidget):
-    """A standardized, high-contrast data table for the ESSA platform."""
+    """A standardized, high-contrast data table for the Yazmina Hijab platform."""
     def __init__(self, parent=None):
         super().__init__(parent)
         

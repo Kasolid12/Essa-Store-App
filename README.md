@@ -1,13 +1,13 @@
 <p align="center">
-  <img src="https://img.shields.io/badge/ESSA%20STORE-v0.8-00F0FF?style=for-the-badge&labelColor=090A0F" alt="ESSA STORE v0.8"/>
+  <img src="https://img.shields.io/badge/YAZMINA%20HIJAB-v0.8-00F0FF?style=for-the-badge&labelColor=090A0F" alt="Yazmina Hijab v0.8"/>
   <img src="https://img.shields.io/badge/PySide6-6.6%2B-00F0FF?style=for-the-badge&labelColor=090A0F" alt="PySide6"/>
   <img src="https://img.shields.io/badge/SQLAlchemy-2.0%2B-00F0FF?style=for-the-badge&labelColor=090A0F" alt="SQLAlchemy"/>
   <img src="https://img.shields.io/badge/Python-3.11%2B-00F0FF?style=for-the-badge&labelColor=090A0F" alt="Python"/>
 </p>
 
-# ⚡ ESSA STORE — Unified Operations Platform
+# ⚡ YAZMINA HIJAB — Unified Operations Platform
 
-**ESSA STORE** is a desktop-based business operations management system built with Python and PySide6 (Qt). It features a distinctive **cyberpunk industrial UI** — dark, neon-accented, and grid-focused — designed for fast daily data entry and operational oversight.
+**YAZMINA HIJAB** is a desktop-based business operations management system built with Python and PySide6 (Qt). It features a distinctive **cyberpunk industrial UI** — dark, neon-accented, and grid-focused — designed for fast daily data entry and operational oversight.
 
 > Built for small-to-medium retail & production businesses that need an all-in-one tool for daily records, payroll, stock management, invoicing, and financial simulation — no internet required.
 
@@ -228,7 +228,7 @@ This project is developed for internal business operations.
 ---
 
 <p align="center">
-  <sub>Built with Python & Qt · ESSA STORE Operations OS v0.8</sub>
+  <sub>Built with Python & Qt · Yazmina Hijab Operations OS v0.8</sub>
   <br>
   <sub>⚡ Cyberpunk · Industrial · Offline-First ⚡</sub>
 </p>

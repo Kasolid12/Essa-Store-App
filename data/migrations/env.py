@@ -11,6 +11,22 @@ config = context.config
 
 import os
 import sys
+
+try:
+    from dotenv import load_dotenv  # opsional
+except ImportError:
+    def load_dotenv(*_args, **_kwargs):
+        return False
+
+# Baca .env bila ada (untuk CLOUD_DATABASE_URL saat migrasi cloud)
+load_dotenv()
+
+# Izinkan override sqlalchemy.url lewat env CLOUD_DATABASE_URL.
+# Contoh migrasi cloud:  CLOUD_DATABASE_URL=... alembic upgrade head
+_cloud_url = os.environ.get("CLOUD_DATABASE_URL", "").strip()
+if _cloud_url:
+    config.set_main_option("sqlalchemy.url", _cloud_url)
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 from data.models import Base

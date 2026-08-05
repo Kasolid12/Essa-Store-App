@@ -1,5 +1,5 @@
 # app_essa/ui/views/dashboard_view.py
-"""Dashboard Essa Store.
+"""Dashboard Yazmina Hijab.
 
 Menampilkan 4 KPI utama (Total Hutang, Total Piutang, Gaji Karyawan, Profit
 Produksi) dengan filter rentang waktu. Semua angka dihitung lewat fungsi di
@@ -59,7 +59,7 @@ class DashboardView(QWidget):
 
         # --- HEADER: judul + tombol refresh ---
         header = QHBoxLayout()
-        title = QLabel("Dashboard Essa Store")
+        title = QLabel("Dashboard Yazmina Hijab")
         title.setStyleSheet(
             f"font-size: 26pt; font-weight: bold; color: {Theme.NEON_CYAN};"
         )

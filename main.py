@@ -31,10 +31,10 @@ class DataSignals(QObject):
 # Definisikan objek notifier global yang bisa diakses oleh seluruh view
 global_notifier = DataSignals()
 
-class ESSAMainWindow(QMainWindow):
+class YazminaMainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("ESSA STORE - Unified Operations Platform")
+        self.setWindowTitle("Yazmina Hijab - Unified Operations Platform")
         self.setMinimumSize(1200, 800) # Give it a wide, dashboard feel
 
         # 1. APPLY THE GLOBAL THEME
@@ -64,9 +64,10 @@ class ESSAMainWindow(QMainWindow):
         sidebar_layout.setSpacing(15)
 
         # --- Branding Area ---
-        lbl_brand = QLabel("ESSA STORE")
+        lbl_brand = QLabel("Yazmina Hijab")
         lbl_brand.setStyleSheet(f"font-size: 22pt; font-weight: bold; color: {Theme.NEON_CYAN};")
         lbl_brand.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        lbl_brand.setWordWrap(True)  # aman utk teks brand yang lebih panjang
         
         lbl_sub = QLabel("OPERATIONS OS v0.8")
         lbl_sub.setStyleSheet(f"font-size: 9pt; color: {Theme.TEXT_MUTED}; letter-spacing: 2px;")
@@ -144,7 +145,15 @@ class ESSAMainWindow(QMainWindow):
         """Fires automatically when the user clicks the X to close the window."""
         # Run the backup engine silently in the background
         backup_database()
-        
+
+        # Sinkronisasi satu arah lokal -> cloud (Fase 5).
+        # Tidak pernah menghentikan penutupan aplikasi walaupun cloud gagal/offline.
+        try:
+            from utils.cloud_sync import sync_local_to_cloud
+            sync_local_to_cloud()
+        except Exception:
+            pass
+
         # Accept the close event so the app actually shuts down
         event.accept()
 
@@ -185,6 +194,6 @@ if __name__ == "__main__":
     # ------------------------------------------------
 
     app = QApplication(sys.argv)
-    window = ESSAMainWindow()
+    window = YazminaMainWindow()
     window.show()
     sys.exit(app.exec())

@@ -27,6 +27,9 @@ exports/
 # ── AI / Tool config ──
 .claude/
 
+# ── Environment / Secrets ──
+.env
+
 # ── Temp files ──
 .fuse_hidden*
 ~$*

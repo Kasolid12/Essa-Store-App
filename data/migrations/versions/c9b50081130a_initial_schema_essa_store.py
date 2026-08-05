@@ -1,4 +1,4 @@
-"""Initial schema ESSA Store
+"""Initial schema Yazmina Hijab
 
 Revision ID: c9b50081130a
 Revises: 

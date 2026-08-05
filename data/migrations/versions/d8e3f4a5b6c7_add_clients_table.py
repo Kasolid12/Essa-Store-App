@@ -5,6 +5,7 @@ Revises: b7e1a2c3d4f5
 Create Date: 2026-07-18 00:00:00.000000
 
 """
+from datetime import datetime
 from typing import Sequence, Union
 
 from alembic import op
@@ -58,24 +59,46 @@ def upgrade() -> None:
         text("SELECT id, nama, no_hp, alamat, catatan FROM persons WHERE person_type = 'KLIEN' AND is_deleted = 0")
     ).fetchall()
     
+    # Konstruksi Core table untuk INSERT dengan nilai eksplisit.
+    # Id baris baru ditentukan secara eksplisit (MAX(id)+1) karena migration
+    # berjalan dalam satu koneksi/transaksi — aman di SQLite maupun Postgres.
+    # (Pengganti last_insert_rowid()/datetime('now') yang hanya ada di SQLite.)
+    clients_t = sa.table(
+        "clients",
+        sa.column("id", sa.Integer),
+        sa.column("nama", sa.String),
+        sa.column("alamat", sa.String),
+        sa.column("no_hp", sa.String),
+        sa.column("catatan", sa.String),
+        sa.column("is_active", sa.Integer),
+        sa.column("is_deleted", sa.Integer),
+        sa.column("created_at", sa.DateTime),
+        sa.column("updated_at", sa.DateTime),
+    )
+
+    now = datetime.now()
     for p in persons:
+        # Id berikutnya (dialect-agnostik)
+        next_id = connection.execute(
+            text("SELECT COALESCE(MAX(id), 0) + 1 FROM clients")
+        ).scalar()
+
         # Insert into clients
-        result = connection.execute(
-            text("""
-                INSERT INTO clients (nama, alamat, no_hp, catatan, is_active, is_deleted, created_at, updated_at)
-                VALUES (:nama, :alamat, :no_hp, :catatan, 1, 0, datetime('now'), datetime('now'))
-            """),
-            {"nama": p.nama, "alamat": p.alamat, "no_hp": p.no_hp, "catatan": p.catatan}
+        connection.execute(
+            clients_t.insert().values(
+                id=next_id,
+                nama=p.nama, alamat=p.alamat, no_hp=p.no_hp, catatan=p.catatan,
+                is_active=1, is_deleted=0, created_at=now, updated_at=now,
+            )
         )
-        # Get the new client id
-        client_id = connection.execute(text("SELECT last_insert_rowid()")).scalar()
-        
+        client_id = next_id
+
         # Update pengeluaran_offline references
         connection.execute(
             text("UPDATE pengeluaran_offline SET client_id = :client_id WHERE person_id = :person_id"),
             {"client_id": client_id, "person_id": p.id}
         )
-        
+
         # Update client_receivables references
         connection.execute(
             text("UPDATE client_receivables SET client_id = :client_id WHERE person_id = :person_id"),

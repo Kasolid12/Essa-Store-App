@@ -128,17 +128,20 @@ def generate_batch_karyawan_slip(run_ids, tanggal_proses):
             nama_person = person.nama.upper() if person else "UNKNOWN"
             id_person = person.id if person else "-"
 
-            c.setFont("Helvetica-Bold", 12)
-            c.drawString(10*mm, height - 15*mm, "ESSA STORE - SLIP GAJI KARYAWAN")
-            c.setFont("Helvetica", 10)
+            c.setFont("Helvetica-Bold", 13)
+            c.drawString(10*mm, height - 15*mm, "YAZMINA HIJAB - SLIP GAJI KARYAWAN")
+            c.setFont("Helvetica", 11)
             c.drawString(10*mm, height - 25*mm, f"ID Karyawan : {id_person}")
             c.drawString(10*mm, height - 30*mm, f"Nama        : {nama_person}")
             c.drawString(10*mm, height - 35*mm, f"Tanggal     : {run.tanggal_proses}")
 
         def draw_footer():
-            """Gambar footer"""
+            """Gambar footer + catatan jam kerja"""
             c.setFont("Helvetica-Oblique", 8)
-            c.drawCentredString(width/2.0, 15*mm, "*Nota ini dicetak secara otomatis oleh Sistem Essa Store")
+            c.drawCentredString(width/2.0, 25*mm, "Jam Kerja dimulai Pukul 08.00 - 16.00 (480 Menit).")
+            c.drawCentredString(width/2.0, 20*mm, "Jika melebihi durasi tersebut maka dihitung lembur")
+            c.setFont("Helvetica-Oblique", 9)
+            c.drawCentredString(width/2.0, 15*mm, "*Nota ini dicetak secara otomatis oleh Sistem Yazmina Hijab")
 
         for idx, run in enumerate(runs):
             person = run.person
@@ -153,7 +156,7 @@ def generate_batch_karyawan_slip(run_ids, tanggal_proses):
             # ========================================================
             attendances = db.query(AttendanceRecord).filter(AttendanceRecord.salary_run_id == run.id).all()
 
-            c.setFont("Helvetica-Bold", 8)
+            c.setFont("Helvetica-Bold", 9)
             c.drawString(10*mm, y, "Tanggal")
             c.drawString(35*mm, y, "Masuk")
             c.drawString(55*mm, y, "Keluar")
@@ -163,7 +166,7 @@ def generate_batch_karyawan_slip(run_ids, tanggal_proses):
             c.line(10*mm, y-2*mm, 138*mm, y-2*mm)
             y -= 6*mm
 
-            c.setFont("Helvetica", 8)
+            c.setFont("Helvetica", 9)
             if attendances:
                 for att in attendances:
                     c.drawString(10*mm, y, str(att.tanggal))
@@ -176,7 +179,7 @@ def generate_batch_karyawan_slip(run_ids, tanggal_proses):
                         c.showPage()
                         draw_header(run)
                         y = height - 45*mm
-                        c.setFont("Helvetica", 8)
+                        c.setFont("Helvetica", 9)
             else:
                 c.drawString(10*mm, y, "Data rincian harian (tap) tidak tersedia dari Excel.")
                 y -= 5*mm
@@ -200,11 +203,11 @@ def generate_batch_karyawan_slip(run_ids, tanggal_proses):
                     subtotal_lembur = item.subtotal
 
             y -= 2*mm
-            c.setFont("Helvetica-Bold", 9)
+            c.setFont("Helvetica-Bold", 10)
             c.drawString(10*mm, y, "RINCIAN PEMBAYARAN:")
             y -= 6*mm
 
-            c.setFont("Helvetica", 9)
+            c.setFont("Helvetica", 10)
             c.drawString(10*mm, y, f"Gaji Normal ({qty_normal:g} mnt @Rp {tarif_normal:g})")
             c.drawString(75*mm, y, ":")
             c.drawRightString(138*mm, y, format_rupiah(subtotal_normal))
@@ -221,13 +224,13 @@ def generate_batch_karyawan_slip(run_ids, tanggal_proses):
             c.line(10*mm, y, 138*mm, y)
             y -= 6*mm
 
-            c.setFont("Helvetica-Bold", 10)
+            c.setFont("Helvetica-Bold", 11)
             c.drawString(10*mm, y, "TOTAL GAJI KOTOR")
             c.drawString(75*mm, y, ":")
             c.drawRightString(138*mm, y, format_rupiah(run.gaji_kotor))
             y -= 6*mm
 
-            c.setFont("Helvetica", 9)
+            c.setFont("Helvetica", 10)
             if run.bon_lama > 0 or run.potong_bon > 0:
                 c.drawString(10*mm, y, "Sisa Bon Lama")
                 c.drawString(75*mm, y, ":")
@@ -242,14 +245,14 @@ def generate_batch_karyawan_slip(run_ids, tanggal_proses):
             c.line(75*mm, y+2*mm, 138*mm, y+2*mm)
             y -= 6*mm
 
-            c.setFont("Helvetica-Bold", 10)
+            c.setFont("Helvetica-Bold", 11)
             c.drawString(10*mm, y, "TOTAL GAJI BERSIH (DITERIMA)")
             c.drawString(75*mm, y, ":")
             c.drawRightString(138*mm, y, format_rupiah(run.gaji_bersih))
             y -= 8*mm
 
             if run.sisa_bon_akhir > 0:
-                c.setFont("Helvetica-Bold", 9)
+                c.setFont("Helvetica-Bold", 10)
                 c.drawString(10*mm, y, "SISA BON AKHIR (BELUM LUNAS)")
                 c.drawString(75*mm, y, ":")
                 c.drawRightString(138*mm, y, format_rupiah(run.sisa_bon_akhir))
@@ -306,16 +309,16 @@ def generate_salary_slip(salary_run_id):
 
         # --- FUNGSI BANTUAN UNTUK MENGGAMBAR HEADER HALAMAN ---
         def draw_header():
-            c.setFont("Helvetica-Bold", 12)
+            c.setFont("Helvetica-Bold", 13)
             if run.tipe == "BORONGAN_PENJAHIT":
-                title = "NOTA GAJI PENJAHIT - ESSA STORE"
+                title = "NOTA GAJI PENJAHIT - YAZMINA HIJAB"
             elif run.tipe == "PENGSUP":
-                title = "NOTA TOTALAN PENGSUP - ESSA STORE"
+                title = "NOTA TOTALAN PENGSUP - YAZMINA HIJAB"
             else:
-                title = "ESSA STORE - SLIP GAJI"
+                title = "YAZMINA HIJAB - SLIP GAJI"
 
             c.drawString(10*mm, height - 15*mm, title)
-            c.setFont("Helvetica", 10)
+            c.setFont("Helvetica", 11)
 
             # Format header menyesuaikan jenis slip
             if run.tipe == "PASUKAN_KARYAWAN":
@@ -334,7 +337,7 @@ def generate_salary_slip(salary_run_id):
         # BAGIAN 1A: TABEL RINCIAN (Khusus PENJAHIT)
         # ========================================================
         if run.tipe == "BORONGAN_PENJAHIT":
-            c.setFont("Helvetica-Bold", 9)
+            c.setFont("Helvetica-Bold", 10)
             c.drawString(10*mm, y, "JENIS GARAPAN")
             c.drawString(75*mm, y, "Qty")
             c.drawString(95*mm, y, "HARGA")
@@ -343,7 +346,7 @@ def generate_salary_slip(salary_run_id):
             c.line(10*mm, y-2*mm, 138*mm, y-2*mm) # Garis pembatas
             y -= 7*mm
 
-            c.setFont("Helvetica", 9)
+            c.setFont("Helvetica", 10)
             for item in run.line_items:
                 nama_garapan = item.model_code or "Barang"
                 if len(nama_garapan) > 23:
@@ -361,7 +364,7 @@ def generate_salary_slip(salary_run_id):
                     c.showPage()
                     draw_header()
                     y = height - 45*mm
-                    c.setFont("Helvetica", 9)
+                    c.setFont("Helvetica", 10)
 
         # ========================================================
         # BAGIAN 1B: TABEL RINCIAN (Khusus PENGSUP)
@@ -379,7 +382,7 @@ def generate_salary_slip(salary_run_id):
                 else: list_barang.append(item)
 
             # --- SEKSI 1: BARANG JADI ---
-            c.setFont("Helvetica-Bold", 9)
+            c.setFont("Helvetica-Bold", 10)
             c.drawString(10*mm, y, "1. DAFTAR KAIN/BARANG JADI")
             y -= 6*mm
 
@@ -390,7 +393,7 @@ def generate_salary_slip(salary_run_id):
             c.line(10*mm, y-2*mm, 138*mm, y-2*mm)
             y -= 6*mm
 
-            c.setFont("Helvetica", 9)
+            c.setFont("Helvetica", 10)
             total_barang = 0
             for item in list_barang:
                 nama = str(item.model_code).replace("[BARANG] ", "")
@@ -404,9 +407,9 @@ def generate_salary_slip(salary_run_id):
                 total_barang += item.subtotal
 
                 y -= 5*mm
-                if y < 45*mm: c.showPage(); draw_header(); y = height - 45*mm; c.setFont("Helvetica", 9)
+                if y < 45*mm: c.showPage(); draw_header(); y = height - 45*mm; c.setFont("Helvetica", 10)
 
-            c.setFont("Helvetica-Bold", 9)
+            c.setFont("Helvetica-Bold", 10)
             c.drawString(10*mm, y, "TOTAL BARANG")
             c.drawRightString(138*mm, y, format_rupiah(total_barang))
             y -= 6*mm
@@ -414,7 +417,7 @@ def generate_salary_slip(salary_run_id):
             # --- SEKSI PENGURANGAN KAIN ---
             total_setelah_kain = total_barang
             if mentah_item:
-                c.setFont("Helvetica", 9)
+                c.setFont("Helvetica", 10)
                 qty_str = f"{int(mentah_item.qty)}" if float(mentah_item.qty).is_integer() else f"{mentah_item.qty:g}"
                 c.drawString(10*mm, y, "KAIN")
                 c.drawString(75*mm, y, qty_str)
@@ -423,7 +426,7 @@ def generate_salary_slip(salary_run_id):
 
                 total_setelah_kain -= abs(mentah_item.subtotal)
                 y -= 5*mm
-                c.setFont("Helvetica-Bold", 9)
+                c.setFont("Helvetica-Bold", 10)
                 c.drawString(10*mm, y, "TOTAL BARANG - KAIN")
                 c.drawRightString(138*mm, y, format_rupiah(total_setelah_kain))
                 y -= 6*mm
@@ -432,7 +435,7 @@ def generate_salary_slip(salary_run_id):
             total_potongan = 0
             if list_potong:
                 y -= 2*mm
-                c.setFont("Helvetica-Bold", 9)
+                c.setFont("Helvetica-Bold", 10)
                 c.drawString(10*mm, y, "2. DAFTAR POTONGAN")
                 y -= 6*mm
 
@@ -443,7 +446,7 @@ def generate_salary_slip(salary_run_id):
                 c.line(10*mm, y-2*mm, 138*mm, y-2*mm)
                 y -= 6*mm
 
-                c.setFont("Helvetica", 9)
+                c.setFont("Helvetica", 10)
                 for item in list_potong:
                     nama = str(item.model_code).replace("[POTONG] ", "")
                     if len(nama) > 23: nama = nama[:20] + "..."
@@ -456,9 +459,9 @@ def generate_salary_slip(salary_run_id):
                     total_potongan += item.subtotal
 
                     y -= 5*mm
-                    if y < 45*mm: c.showPage(); draw_header(); y = height - 45*mm; c.setFont("Helvetica", 9)
+                    if y < 45*mm: c.showPage(); draw_header(); y = height - 45*mm; c.setFont("Helvetica", 10)
 
-                c.setFont("Helvetica-Bold", 9)
+                c.setFont("Helvetica-Bold", 10)
                 c.drawString(10*mm, y, "TOTAL POTONGAN")
                 c.drawRightString(138*mm, y, format_rupiah(total_potongan))
                 y -= 6*mm
@@ -466,7 +469,7 @@ def generate_salary_slip(salary_run_id):
             # --- GRAND TOTAL KESELURUHAN DIBAYAR ---
             grand_total = total_setelah_kain + total_potongan
             y -= 4*mm
-            c.setFont("Helvetica-Bold", 10)
+            c.setFont("Helvetica-Bold", 11)
             c.drawString(10*mm, y, "TOTAL KESELURUHAN DIBAYAR")
             c.drawRightString(138*mm, y, format_rupiah(grand_total))
             y -= 8*mm
@@ -480,7 +483,7 @@ def generate_salary_slip(salary_run_id):
             # 1. Tarik riwayat kedatangan harian
             attendances = db.query(AttendanceRecord).filter(AttendanceRecord.salary_run_id == run.id).all()
 
-            c.setFont("Helvetica-Bold", 8)
+            c.setFont("Helvetica-Bold", 9)
             c.drawString(10*mm, y, "Tanggal")
             c.drawString(35*mm, y, "Masuk")
             c.drawString(55*mm, y, "Keluar")
@@ -490,7 +493,7 @@ def generate_salary_slip(salary_run_id):
             c.line(10*mm, y-2*mm, 138*mm, y-2*mm)
             y -= 6*mm
 
-            c.setFont("Helvetica", 8)
+            c.setFont("Helvetica", 9)
             if attendances:
                 for att in attendances:
                     c.drawString(10*mm, y, str(att.tanggal))
@@ -499,7 +502,7 @@ def generate_salary_slip(salary_run_id):
                     c.drawRightString(95*mm, y, f"{att.menit_normal:g}")
                     c.drawRightString(138*mm, y, f"{att.menit_lembur:g}")
                     y -= 5*mm
-                    if y < 45*mm: c.showPage(); draw_header(); y = height - 45*mm; c.setFont("Helvetica", 8)
+                    if y < 45*mm: c.showPage(); draw_header(); y = height - 45*mm; c.setFont("Helvetica", 9)
             else:
                 c.drawString(10*mm, y, "Data rincian harian (tap) tidak tersedia dari Excel.")
                 y -= 5*mm
@@ -522,12 +525,12 @@ def generate_salary_slip(salary_run_id):
                     subtotal_lembur = item.subtotal
 
             y -= 2*mm
-            c.setFont("Helvetica-Bold", 9)
+            c.setFont("Helvetica-Bold", 10)
             c.drawString(10*mm, y, "RINCIAN PEMBAYARAN:")
             y -= 6*mm
 
             # Tulis baris slip menggunakan tarif kustom hasil editan kasir di tabel
-            c.setFont("Helvetica", 9)
+            c.setFont("Helvetica", 10)
             c.drawString(10*mm, y, f"Gaji Normal ({qty_normal:g} mnt @Rp {tarif_normal:g})")
             c.drawString(75*mm, y, ":")
             c.drawRightString(138*mm, y, format_rupiah(subtotal_normal))
@@ -544,14 +547,14 @@ def generate_salary_slip(salary_run_id):
         c.line(10*mm, y, 138*mm, y) # Garis pembatas akhir rincian
         y -= 6*mm
 
-        c.setFont("Helvetica-Bold", 10)
+        c.setFont("Helvetica-Bold", 11)
         c.drawString(10*mm, y, "TOTAL GAJI KOTOR")
         c.drawString(75*mm, y, ":")
         c.drawRightString(138*mm, y, format_rupiah(run.gaji_kotor))
         y -= 6*mm
 
         # Bagian Kasbon (Hanya tampil jika ada riwayat bon)
-        c.setFont("Helvetica", 9)
+        c.setFont("Helvetica", 10)
         if run.bon_lama > 0 or run.potong_bon > 0:
             c.drawString(10*mm, y, "Sisa Bon Lama")
             c.drawString(75*mm, y, ":")
@@ -566,14 +569,14 @@ def generate_salary_slip(salary_run_id):
         c.line(75*mm, y+2*mm, 138*mm, y+2*mm) # Garis Total Bersih
         y -= 6*mm
 
-        c.setFont("Helvetica-Bold", 10)
+        c.setFont("Helvetica-Bold", 11)
         c.drawString(10*mm, y, "TOTAL GAJI BERSIH (DITERIMA)")
         c.drawString(75*mm, y, ":")
         c.drawRightString(138*mm, y, format_rupiah(run.gaji_bersih))
         y -= 8*mm
 
         if run.sisa_bon_akhir > 0:
-            c.setFont("Helvetica-Bold", 9)
+            c.setFont("Helvetica-Bold", 10)
             c.drawString(10*mm, y, "SISA BON AKHIR (BELUM LUNAS)")
             c.drawString(75*mm, y, ":")
             c.drawRightString(138*mm, y, format_rupiah(run.sisa_bon_akhir))
@@ -582,9 +585,15 @@ def generate_salary_slip(salary_run_id):
         # ========================================================
         # BAGIAN 3: FOOTER
         # ========================================================
-        c.setFont("Helvetica-Oblique", 8)
+        # Catatan jam kerja (khusus slip Karyawan)
+        if run.tipe == "PASUKAN_KARYAWAN":
+            c.setFont("Helvetica-Oblique", 8)
+            c.drawCentredString(width/2.0, 25*mm, "Jam Kerja dimulai Pukul 08.00 - 16.00 (480 Menit).")
+            c.drawCentredString(width/2.0, 20*mm, "Jika melebihi durasi tersebut maka dihitung lembur")
+
+        c.setFont("Helvetica-Oblique", 9)
         # Cetak tepat di tengah bawah kertas
-        c.drawCentredString(width/2.0, 15*mm, "*Nota ini dicetak secara otomatis oleh Sistem Essa Store")
+        c.drawCentredString(width/2.0, 15*mm, "*Nota ini dicetak secara otomatis oleh Sistem Yazmina Hijab")
 
         c.save()
         return filepath
