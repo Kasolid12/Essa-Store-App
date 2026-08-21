@@ -26,5 +26,9 @@ class ProfitHistory(Base):
 
     catatan: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
+    updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime, default=datetime.now, onupdate=datetime.now)
+    # NOTE (Fase 6.3): kepemilikan baris antar perangkat (diisi otomatis via event di base.py; NULL = baris lama)
+    created_by_device: Mapped[Optional[str]] = mapped_column(String)
+    updated_by_device: Mapped[Optional[str]] = mapped_column(String)
 
     debt_entry = relationship("DebtEntry")

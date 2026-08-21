@@ -20,6 +20,10 @@ class HasilCutting(Base):
     
     is_deleted: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
+    updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime, default=datetime.now, onupdate=datetime.now)
+    # NOTE (Fase 6.3): kepemilikan baris antar perangkat (diisi otomatis via event di base.py; NULL = baris lama)
+    created_by_device: Mapped[Optional[str]] = mapped_column(String)
+    updated_by_device: Mapped[Optional[str]] = mapped_column(String)
 
     # --- UPDATED: Relationships ---
     sku = relationship("SkuMaster")
@@ -43,6 +47,10 @@ class DistribusiCutting(Base):
     
     is_deleted: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
+    updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime, default=datetime.now, onupdate=datetime.now)
+    # NOTE (Fase 6.3): kepemilikan baris antar perangkat (diisi otomatis via event di base.py; NULL = baris lama)
+    created_by_device: Mapped[Optional[str]] = mapped_column(String)
+    updated_by_device: Mapped[Optional[str]] = mapped_column(String)
 
     # --- UPDATED: Relationships ---
     person = relationship("Person")
@@ -61,6 +69,10 @@ class ModalOperasional(Base):
     
     is_deleted: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
+    updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime, default=datetime.now, onupdate=datetime.now)
+    # NOTE (Fase 6.3): kepemilikan baris antar perangkat (diisi otomatis via event di base.py; NULL = baris lama)
+    created_by_device: Mapped[Optional[str]] = mapped_column(String)
+    updated_by_device: Mapped[Optional[str]] = mapped_column(String)
 
 class PengeluaranOffline(Base):
     __tablename__ = "pengeluaran_offline"
@@ -77,6 +89,10 @@ class PengeluaranOffline(Base):
     
     is_deleted: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
+    updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime, default=datetime.now, onupdate=datetime.now)
+    # NOTE (Fase 6.3): kepemilikan baris antar perangkat (diisi otomatis via event di base.py; NULL = baris lama)
+    created_by_device: Mapped[Optional[str]] = mapped_column(String)
+    updated_by_device: Mapped[Optional[str]] = mapped_column(String)
 
     sku = relationship("SkuMaster")
     person = relationship("Person")

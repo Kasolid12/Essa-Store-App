@@ -33,6 +33,9 @@ if engine.dialect.name == "sqlite":
         cursor = dbapi_connection.cursor()
         cursor.execute("PRAGMA journal_mode=WAL")
         cursor.execute("PRAGMA synchronous=NORMAL")
+        # Tunggu maks. 5 detik bila DB sedang dikunci proses lain
+        # (mis. auto-pull cloud di thread latar saat app baru dibuka).
+        cursor.execute("PRAGMA busy_timeout=5000")
         cursor.close()
 
 # Session Factory untuk database aplikasi
@@ -53,20 +56,37 @@ def get_db():
 # URL dibaca lazy dari env agar perubahan .env langsung terlihat.
 # ─────────────────────────────────────────────────────────────────────
 _cloud_engine = None
+_cloud_engine_failed = False   # True bila driver cloud hilang — pesan dicetak sekali saja
 
 def get_cloud_engine():
-    """Kembalikan engine Postgres cloud. None bila CLOUD_DATABASE_URL belum diisi."""
-    global _cloud_engine
+    """Kembalikan engine Postgres cloud. None bila CLOUD_DATABASE_URL belum diisi
+    ATAU driver Postgres (psycopg2) tidak terpasang di interpreter ini."""
+    global _cloud_engine, _cloud_engine_failed
     url = os.environ.get("CLOUD_DATABASE_URL", "").strip()
     if not url:
         return None
-    if _cloud_engine is None:
-        _cloud_engine = create_engine(
-            url,
-            echo=False,
-            pool_pre_ping=True,
-            connect_args={"connect_timeout": 5},  # jangan menggantung lama saat app ditutup
-        )
+    if _cloud_engine is None and not _cloud_engine_failed:
+        _kwargs = {"echo": False, "pool_pre_ping": True}
+        # connect_timeout hanya dikenal driver Postgres (psycopg2).
+        # Untuk URL non-Postgres (mis. SQLite saat uji coba) jangan dikirim.
+        if "postgres" in url:
+            _kwargs["connect_args"] = {"connect_timeout": 5}
+        try:
+            _cloud_engine = create_engine(url, **_kwargs)
+        except ImportError as e:
+            # Driver Postgres (psycopg2) belum terpasang di interpreter ini.
+            # Terjadi bila aplikasi dibuka lewat double-click main.py — Windows
+            # memakai Python lain (tanpa dependensi aplikasi). Jangan crash:
+            # laporkan SEKALI dengan jelas, lalu biarkan status cloud "NONAKTIF".
+            print(
+                "[CloudSync] Cloud nonaktif: driver database cloud belum "
+                f"terpasang ({e}).\n"
+                "            Buka aplikasi lewat start_app.bat, atau install "
+                "dependensi:\n"
+                "            pip install -r requirements.txt"
+            )
+            _cloud_engine_failed = True
+            return None
     return _cloud_engine
 
 def get_cloud_session():

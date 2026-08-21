@@ -28,6 +28,10 @@ class SalaryRun(Base):
     
     is_deleted: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
+    updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime, default=datetime.now, onupdate=datetime.now)
+    # NOTE (Fase 6.3): kepemilikan baris antar perangkat (diisi otomatis via event di base.py; NULL = baris lama)
+    created_by_device: Mapped[Optional[str]] = mapped_column(String)
+    updated_by_device: Mapped[Optional[str]] = mapped_column(String)
 
     person = relationship("Person")
     line_items: Mapped[List["SalaryLineItem"]] = relationship("SalaryLineItem", back_populates="salary_run")
@@ -48,6 +52,15 @@ class SalaryLineItem(Base):
     tarif_per_pcs: Mapped[float] = mapped_column(Float, nullable=False)
     subtotal: Mapped[float] = mapped_column(Float, nullable=False)
 
+    # NOTE (Fase 6): updated_at NULLABLE agar pull dari cloud (nilai NULL) tidak gagal.
+    updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime, default=datetime.now, onupdate=datetime.now)
+    # NOTE (Fase 6.3): kepemilikan baris antar perangkat (diisi otomatis via event di base.py; NULL = baris lama)
+    created_by_device: Mapped[Optional[str]] = mapped_column(String)
+    updated_by_device: Mapped[Optional[str]] = mapped_column(String)
+    # NOTE (Fase 6.3): kepemilikan baris antar perangkat (diisi otomatis via event di base.py; NULL = baris lama)
+    created_by_device: Mapped[Optional[str]] = mapped_column(String)
+    updated_by_device: Mapped[Optional[str]] = mapped_column(String)
+
     # --- THE FIX: Missing Relationships ---
     # This connects the line item back to its parent SalaryRun
     salary_run = relationship("SalaryRun", back_populates="line_items")
@@ -63,6 +76,15 @@ class PengsupReconciliation(Base):
     qty: Mapped[float] = mapped_column(Float, nullable=False)
     harga_per_unit: Mapped[float] = mapped_column(Float, nullable=False)
     subtotal: Mapped[float] = mapped_column(Float, nullable=False)
+
+    # NOTE (Fase 6): updated_at NULLABLE agar pull dari cloud (nilai NULL) tidak gagal.
+    updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime, default=datetime.now, onupdate=datetime.now)
+    # NOTE (Fase 6.3): kepemilikan baris antar perangkat (diisi otomatis via event di base.py; NULL = baris lama)
+    created_by_device: Mapped[Optional[str]] = mapped_column(String)
+    updated_by_device: Mapped[Optional[str]] = mapped_column(String)
+    # NOTE (Fase 6.3): kepemilikan baris antar perangkat (diisi otomatis via event di base.py; NULL = baris lama)
+    created_by_device: Mapped[Optional[str]] = mapped_column(String)
+    updated_by_device: Mapped[Optional[str]] = mapped_column(String)
 
     salary_run = relationship("SalaryRun", back_populates="pengsup_items")
     sku = relationship("SkuMaster")
@@ -87,6 +109,10 @@ class AttendanceRecord(Base):
     
     status: Mapped[Optional[str]] = mapped_column(String) # 'NORMAL', 'LUPA_TAP', 'LIBUR', 'SAKIT'
     catatan: Mapped[Optional[str]] = mapped_column(String)
+    updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime, default=datetime.now, onupdate=datetime.now)
+    # NOTE (Fase 6.3): kepemilikan baris antar perangkat (diisi otomatis via event di base.py; NULL = baris lama)
+    created_by_device: Mapped[Optional[str]] = mapped_column(String)
+    updated_by_device: Mapped[Optional[str]] = mapped_column(String)
 
     person = relationship("Person")
     
@@ -97,3 +123,7 @@ class MasterTarifPenjahit(Base):
     kode_garapan: Mapped[str] = mapped_column(String, unique=True, nullable=False)
     harga: Mapped[float] = mapped_column(Float, nullable=False)
     is_active: Mapped[int] = mapped_column(Integer, default=1)
+    updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime, default=datetime.now, onupdate=datetime.now)
+    # NOTE (Fase 6.3): kepemilikan baris antar perangkat (diisi otomatis via event di base.py; NULL = baris lama)
+    created_by_device: Mapped[Optional[str]] = mapped_column(String)
+    updated_by_device: Mapped[Optional[str]] = mapped_column(String)

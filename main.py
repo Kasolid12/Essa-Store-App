@@ -6,7 +6,7 @@ from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QHBoxLayout, QVBoxLayout,
     QLabel, QStackedWidget, QFrame
 )
-from PySide6.QtCore import Qt, QObject, Signal
+from PySide6.QtCore import Qt, QObject, Signal, QThread, QTimer
 
 # Import your custom UI components
 from ui.theme import Theme
@@ -30,6 +30,18 @@ class DataSignals(QObject):
 
 # Definisikan objek notifier global yang bisa diakses oleh seluruh view
 global_notifier = DataSignals()
+
+class _CloudSyncWorker(QThread):
+    """Jalankan sinkronisasi DUA ARAH di thread latar — dipakai tombol
+    'SYNC NOW' di sidebar (Fase 7). Tidak pernah menggagalkan UI."""
+    done = Signal(dict)
+
+    def run(self):
+        try:
+            from utils.cloud_sync import sync_local_to_cloud
+            self.done.emit(sync_local_to_cloud())
+        except Exception as e:
+            self.done.emit({"status": "error", "message": str(e)})
 
 class YazminaMainWindow(QMainWindow):
     def __init__(self):
@@ -100,6 +112,9 @@ class YazminaMainWindow(QMainWindow):
 
         sidebar_layout.addStretch() # Pushes everything up
 
+        # --- Cloud Sync (Fase 7): indikator status + tombol sinkronisasi manual ---
+        self._build_cloud_footer(sidebar_layout)
+
         # --- Footer Area ---
         btn_exit = CyberButton("EXIT SYSTEM", is_danger=True)
         btn_exit.clicked.connect(self.close)
@@ -124,6 +139,92 @@ class YazminaMainWindow(QMainWindow):
         content_layout.addWidget(self.stacked_widget)
         self.main_layout.addWidget(self.content_area)
 
+    # ── Cloud Sync Footer (Fase 7) ──────────────────────────────────
+    def _build_cloud_footer(self, sidebar_layout):
+        """Panel kecil di sidebar: indikator status cloud + tombol 'SYNC NOW'."""
+        self._syncing = False
+
+        self.lbl_cloud_status = QLabel("☁ CLOUD NONAKTIF")
+        self.lbl_cloud_status.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.lbl_cloud_status.setWordWrap(True)
+        self.lbl_cloud_status.setStyleSheet(
+            f"color: {Theme.TEXT_MUTED}; font-size: 8pt; letter-spacing: 1px;"
+        )
+        sidebar_layout.addWidget(self.lbl_cloud_status)
+
+        self.btn_sync_now = CyberButton("⟳ SYNC NOW")
+        self.btn_sync_now.clicked.connect(self.start_manual_sync)
+        sidebar_layout.addWidget(self.btn_sync_now)
+
+        self.refresh_cloud_status()
+
+    def _set_cloud_status(self, text, color):
+        """Ubah teks + warna label status cloud."""
+        self.lbl_cloud_status.setText(text)
+        self.lbl_cloud_status.setStyleSheet(
+            f"color: {color}; font-size: 8pt; letter-spacing: 1px;"
+        )
+
+    def refresh_cloud_status(self):
+        """Baca metadata sync lokal (cloud_last_sync) & tampilkan status cloud."""
+        try:
+            from data.database import SessionLocal, get_cloud_engine
+            from data.models.master import AppSetting
+            cloud_on = get_cloud_engine() is not None
+            if not self._syncing:
+                self.btn_sync_now.setEnabled(cloud_on)
+            if not cloud_on:
+                self._set_cloud_status("☁ CLOUD NONAKTIF", Theme.TEXT_MUTED)
+                return
+            db = SessionLocal()
+            try:
+                rows = db.query(AppSetting).filter(
+                    AppSetting.key.in_(("cloud_last_sync", "cloud_last_error"))
+                ).all()
+                vals = {r.key: (r.value or "").strip() for r in rows}
+                last = vals.get("cloud_last_sync") or None
+                last_err = vals.get("cloud_last_error")
+            finally:
+                db.close()
+            if last_err:
+                # Sync terakhir GAGAL (mis. jaringan/DNS) — jangan tampilkan
+                # "TERSINKRON" yang menyesatkan. Tombol tetap aktif utk retry.
+                self._set_cloud_status("☁ OFFLINE · SYNC GAGAL", Theme.NEON_YELLOW)
+                return
+            if last:
+                self._set_cloud_status(f"☁ TERSINKRON · {last[:16]}", Theme.NEON_CYAN)
+            else:
+                self._set_cloud_status("☁ CLOUD SIAP · BELUM SYNC", Theme.NEON_YELLOW)
+        except Exception as e:
+            print(f"[CloudSync] refresh status gagal: {e}")
+            self._set_cloud_status("☁ CLOUD NONAKTIF", Theme.TEXT_MUTED)
+
+    def start_manual_sync(self):
+        """Jalankan sinkronisasi dua arah di thread latar (tombol SYNC NOW)."""
+        if self._syncing:
+            return  # sudah ada sync yang berjalan (auto-pull / manual)
+        self._syncing = True
+        self.btn_sync_now.setEnabled(False)
+        self._set_cloud_status("☁ MENYINKRONKAN...", Theme.NEON_YELLOW)
+        self._sync_worker = _CloudSyncWorker(self)
+        self._sync_worker.done.connect(self._on_manual_sync_done)
+        self._sync_worker.finished.connect(self._sync_worker.deleteLater)
+        self._sync_worker.start()
+
+    def _on_manual_sync_done(self, result):
+        """Update label setelah sync manual selesai + refresh dashboard."""
+        self._syncing = False
+        status = result.get("status")
+        if status == "ok":
+            self._set_cloud_status("☁ SYNC OK", Theme.NEON_CYAN)
+            QTimer.singleShot(3000, self.refresh_cloud_status)
+        elif status == "skipped":
+            self.refresh_cloud_status()
+        else:
+            self._set_cloud_status("☁ GAGAL · CEK INTERNET", Theme.NEON_PINK)
+            QTimer.singleShot(4000, self.refresh_cloud_status)
+        global_notifier.database_changed.emit()
+
     def switch_page(self, page_key):
         """Switches the active page. Lazy-loads the page if it hasn't been created yet."""
         if page_key not in self.pages:
@@ -146,19 +247,34 @@ class YazminaMainWindow(QMainWindow):
         # Run the backup engine silently in the background
         backup_database()
 
-        # Sinkronisasi satu arah lokal -> cloud (Fase 5).
+        # Sinkronisasi dua arah lokal <-> cloud (Fase 5-6).
         # Tidak pernah menghentikan penutupan aplikasi walaupun cloud gagal/offline.
-        try:
-            from utils.cloud_sync import sync_local_to_cloud
-            sync_local_to_cloud()
-        except Exception:
-            pass
+        # Bila sync manual/auto-pull sedang berjalan di thread latar, lewati saja
+        # (transaksi sync tidak boleh berjalan dua-duanya secara bersamaan).
+        if not getattr(self, "_syncing", False):
+            try:
+                from utils.cloud_sync import sync_local_to_cloud
+                # retries=0: saat menutup aplikasi jangan tunda keluar walau
+                # jaringan/DNS bermasalah (sync dicoba lagi di pembukaan berikutnya).
+                sync_local_to_cloud(retries=0)
+            except Exception:
+                pass
 
         # Accept the close event so the app actually shuts down
         event.accept()
 
 if __name__ == "__main__":
     Base.metadata.create_all(bind=engine)
+
+    # --- Identitas perangkat (Fase 6.3) ---
+    # Pastikan device_id lokal ada & beri tahu model agar setiap baris baru
+    # dicatat pembuatnya (created_by_device) dan setiap edit dicatat
+    # (updated_by_device) — fondasi kepemilikan baris antar perangkat.
+    try:
+        from utils.cloud_sync import ensure_device_id
+        ensure_device_id()
+    except Exception:
+        pass
 
     # --- Startup sync: MasterTarifPenjahit ← TarifMaster ---
     # Memastikan semua data tarif_jahit tersedia di dropdown Penjahit Payroll
@@ -196,4 +312,37 @@ if __name__ == "__main__":
     app = QApplication(sys.argv)
     window = YazminaMainWindow()
     window.show()
+
+    # --- Startup: sinkronisasi dua arah otomatis (Fase 5.5 + 6.2) ---
+    # Dijalankan di THREAD LATAR agar window langsung tampil (tidak membeku
+    # saat Neon cold start): perangkat baru mengunduh seluruh data cloud,
+    # perangkat lama menarik perubahan perangkat lain & mengirim perubahan
+    # lokal. Setelah selesai, sinyal database_changed memicu refresh dashboard.
+    # Gagal/offline => dilewati tanpa mengganggu aplikasi.
+    try:
+        class _CloudPullWorker(QThread):
+            done = Signal()
+            def run(self):
+                try:
+                    from utils.cloud_sync import maybe_auto_pull
+                    maybe_auto_pull()
+                except Exception:
+                    pass
+                self.done.emit()
+
+        def _after_startup_pull():
+            # Auto-pull selesai -> izinkan tombol SYNC NOW lagi + perbarui status
+            window._syncing = False
+            window.refresh_cloud_status()
+
+        window._syncing = True          # cegah double-sync saat auto-pull berjalan
+        window.btn_sync_now.setEnabled(False)
+        _worker = _CloudPullWorker(window)
+        _worker.done.connect(global_notifier.database_changed.emit)
+        _worker.done.connect(_after_startup_pull)
+        _worker.finished.connect(_worker.deleteLater)
+        _worker.start()
+    except Exception:
+        pass
+
     sys.exit(app.exec())

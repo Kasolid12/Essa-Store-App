@@ -11,6 +11,9 @@ class BonBalance(Base):
     person_id: Mapped[int] = mapped_column(ForeignKey("persons.id"), nullable=False, unique=True)
     saldo: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now, onupdate=datetime.now)
+    # NOTE (Fase 6.3): kepemilikan baris antar perangkat (diisi otomatis via event di base.py; NULL = baris lama)
+    created_by_device: Mapped[Optional[str]] = mapped_column(String)
+    updated_by_device: Mapped[Optional[str]] = mapped_column(String)
 
     person = relationship("Person")
 
@@ -28,5 +31,9 @@ class BonMovement(Base):
     catatan: Mapped[Optional[str]] = mapped_column(String)
     
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
+    updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime, default=datetime.now, onupdate=datetime.now)
+    # NOTE (Fase 6.3): kepemilikan baris antar perangkat (diisi otomatis via event di base.py; NULL = baris lama)
+    created_by_device: Mapped[Optional[str]] = mapped_column(String)
+    updated_by_device: Mapped[Optional[str]] = mapped_column(String)
 
     person = relationship("Person")

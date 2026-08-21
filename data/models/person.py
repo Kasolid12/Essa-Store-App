@@ -28,6 +28,9 @@ class Person(Base):
     is_deleted: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now, onupdate=datetime.now)
+    # NOTE (Fase 6.3): kepemilikan baris antar perangkat (diisi otomatis via event di base.py; NULL = baris lama)
+    created_by_device: Mapped[Optional[str]] = mapped_column(String)
+    updated_by_device: Mapped[Optional[str]] = mapped_column(String)
 
     def __repr__(self) -> str:
         return f"<Person(nama='{self.nama}', type='{self.person_type}')>"
