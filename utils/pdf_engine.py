@@ -1053,7 +1053,7 @@ def generate_invoice_pdf(sales_data, nama_klien, total_tagihan, sisa_piutang,
     pdf.set_x(LM+115)
     pdf.set_font("Helvetica",'B', 10)
     pdf.set_text_color(*NAVY)
-    pdf.cell(75, 5, "YAZMINA HIJAB", 0, 1, 'C')
+    pdf.cell(75, 5, "Achmad Fais Setiawan", 0, 1, 'C')
     pdf.set_x(LM+115)
     pdf.set_font("Helvetica",'', 8)
     pdf.set_text_color(*GREY)
