@@ -70,10 +70,26 @@ function AuthProvider({ children }) {
 // ── Protected Layout (sidebar + content) ──────────────────────────────
 function ProtectedLayout({ children }) {
   const { user } = useAuth()
+  const [sidebarOpen, setSidebarOpen] = useState(false)
+  const location = useLocation()
+
+  // Close sidebar on route change (mobile)
+  useEffect(() => {
+    setSidebarOpen(false)
+  }, [location.pathname])
+
   if (!user) return <Navigate to="/login" replace />
   return (
-    <div style={{ display: 'flex' }}>
-      <Sidebar />
+    <div>
+      {/* Mobile hamburger */}
+      <button
+        className="hamburger"
+        onClick={() => setSidebarOpen(!sidebarOpen)}
+        aria-label="Toggle menu"
+      >
+        {sidebarOpen ? '✕' : '☰'}
+      </button>
+      <Sidebar open={sidebarOpen} onClose={() => setSidebarOpen(false)} />
       <div className="content-area">
         {children}
       </div>

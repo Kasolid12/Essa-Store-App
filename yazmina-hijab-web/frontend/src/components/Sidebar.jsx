@@ -29,7 +29,7 @@ const NAV_SECTIONS = [
   },
 ]
 
-export default function Sidebar() {
+export default function Sidebar({ open, onClose }) {
   const { user, logout } = useAuth()
   const navigate = useNavigate()
 
@@ -38,42 +38,56 @@ export default function Sidebar() {
     navigate('/login', { replace: true })
   }
 
+  const handleNavClick = () => {
+    // Close sidebar on mobile after navigation
+    if (onClose) onClose()
+  }
+
   return (
-    <nav className="sidebar">
-      {/* Brand */}
-      <div className="sidebar-brand">
-        <h1>YAZMINA HIJAB</h1>
-        <p>OPERATIONS OS · WEB v0.1</p>
-      </div>
+    <>
+      {/* Overlay for mobile */}
+      <div
+        className={`sidebar-overlay${open ? ' visible' : ''}`}
+        onClick={onClose}
+      />
 
-      {/* Navigation */}
-      <div className="sidebar-nav">
-        {NAV_SECTIONS.map(section => (
-          <div key={section.title} className="sidebar-section">
-            <div className="sidebar-section-title">{section.title}</div>
-            {section.items.map(item => (
-              <NavLink
-                key={item.to}
-                to={item.to}
-                className={({ isActive }) =>
-                  `sidebar-link${isActive ? ' active' : ''}`
-                }
-              >
-                <span className="sidebar-icon">{item.icon}</span>
-                {item.label}
-              </NavLink>
-            ))}
-          </div>
-        ))}
-      </div>
+      <nav className={`sidebar${open ? ' open' : ''}`}>
+        {/* Brand */}
+        <div className="sidebar-brand">
+          <h1>YAZMINA HIJAB</h1>
+          <p>OPERATIONS OS · WEB v0.1</p>
+        </div>
 
-      {/* Footer */}
-      <div className="sidebar-footer">
-        <div className="admin-label">👤 {user?.username || 'admin'}</div>
-        <button className="btn btn-danger" onClick={handleLogout} style={{ width: '100%' }}>
-          LOGOUT
-        </button>
-      </div>
-    </nav>
+        {/* Navigation */}
+        <div className="sidebar-nav">
+          {NAV_SECTIONS.map(section => (
+            <div key={section.title} className="sidebar-section">
+              <div className="sidebar-section-title">{section.title}</div>
+              {section.items.map(item => (
+                <NavLink
+                  key={item.to}
+                  to={item.to}
+                  className={({ isActive }) =>
+                    `sidebar-link${isActive ? ' active' : ''}`
+                  }
+                  onClick={handleNavClick}
+                >
+                  <span className="sidebar-icon">{item.icon}</span>
+                  {item.label}
+                </NavLink>
+              ))}
+            </div>
+          ))}
+        </div>
+
+        {/* Footer */}
+        <div className="sidebar-footer">
+          <div className="admin-label">👤 {user?.username || 'admin'}</div>
+          <button className="btn btn-danger" onClick={handleLogout} style={{ width: '100%' }}>
+            LOGOUT
+          </button>
+        </div>
+      </nav>
+    </>
   )
 }
