@@ -1,77 +1,115 @@
-# 🚀 Panduan Deploy Yazmina Hijab Web ke Rumahweb
+# 🚀 Panduan Deploy Yazmina Hijab Web ke Rumahweb Unlimited Hosting
 
-## Overview
+## ✅ Status: BISA Deploy!
 
-Yazmina Hijab Web terdiri dari 2 bagian:
-1. **Backend** — FastAPI (Python) berjalan di port 8765
-2. **Frontend** — React (Vite) yang di-build jadi static files
+Rumahweb Unlimited Hosting **mendukung Python & FastAPI** pada paket **GROW** dan **BLOOM**.
 
-**Target:** Deploy ke Rumahweb Cloud Hosting atau VPS.
+### Cek Paket Hosting Kamu
+
+| Paket | Harga | Python | SSH | RAM | Status |
+|---|---|---|---|---|---|
+| **SEED** | Rp 17.900/bln | ❌ Tidak | ❌ Tidak | 512MB | ❌ Tidak cukup |
+| **GROW** | Rp 29.900/bln | ✅ Ya | ✅ Ya | 1GB | ✅ Bisa (minimal) |
+| **BLOOM** | Rp 49.900/bln | ✅ Ya | ✅ Ya | 2GB | ✅ Recommended |
+
+> **Cara cek paket:** Login cPanel → lihat di bagian atas atau menu "Statistics"
 
 ---
 
-## Opsi 1: Cloud Hosting (cPanel) — RECOMMENDED
+## Persiapan Sebelum Deploy
 
-**Paket minimal:** Cloud Space 10 GB (Rp 120.000/bulan)
+### 1. Pastikan Paket Mendukung Python
 
-### Fitur yang Didukung
-- ✅ Python & Node.JS
-- ✅ SSH Access
-- ✅ SSL Gratis (Let's Encrypt)
-- ✅ Unlimited MariaDB (tapi kita pakai Neon PostgreSQL)
-- ✅ Akses ke File Manager & Terminal
+Login cPanel → cari menu **"Setup Python App"** di bagian **Software**.
 
-### Langkah Deploy
+- ✅ **Ada menu "Setup Python App"** → Paket kamu mendukung Python
+- ❌ **Tidak ada menu** → Paket kamu tidak mendukung (SEED), perlu upgrade
 
-#### 1. Persiapan di Lokal
+### 2. Build Frontend di Lokal
 
 ```bash
-# Build frontend jadi static files
 cd yazmina-hijab-web/frontend
+npm install
 npm run build
-# Output: frontend/dist/ (file HTML, CSS, JS)
+# Output: folder dist/ (berisi index.html, CSS, JS)
 ```
 
-#### 2. Upload ke Hosting
+### 3. Siapkan File yang Perlu Diupload
+
+```
+yazmina-hijab-web/
+├── backend/
+│   ├── app/                    ← Upload semua
+│   ├── requirements.txt        ← Upload
+│   ├── setup_dev.py            ← Upload
+│   └── .env                    ← Buat baru di server
+├── frontend/
+│   └── dist/                   ← Upload (hasil build)
+└── .htaccess                   ← Buat baru di public_html
+```
+
+---
+
+## Langkah Deploy (Step by Step)
+
+### Step 1: Login cPanel
+
+1. Buka `https://yourdomain.com:2083` atau `https://server.rumahweb.com:2083`
+2. Masukkan username & password cPanel
+
+### Step 2: Setup Python App
+
+1. Cari menu **"Setup Python App"** di bagian **Software**
+2. Klik **"Create Application"**
+3. Isi konfigurasi:
+   - **Python Version:** `3.11` atau `3.12` (pilih yang tersedia)
+   - **Application Root:** `yazmina-hijab-web/backend`
+   - **Application URL:** `(kosongkan untuk akses via domain utama)`
+   - **Application Startup File:** `app/main.py`
+4. Klik **"Create"**
+
+### Step 3: Upload File Backend
 
 **Via File Manager cPanel:**
-1. Login cPanel → File Manager
-2. Navigasi ke `/home/username/`
-3. Buat folder `yazmina-hijab-web`
-4. Upload seluruh folder `backend/` dan `frontend/dist/`
+
+1. Buka **File Manager**
+2. Navigasi ke `/home/username/yazmina-hijab-web/`
+3. Upload folder `backend/app/` dan `backend/requirements.txt` dan `backend/setup_dev.py`
 
 **Via SSH (lebih cepat):**
+
 ```bash
 # Dari komputer lokal
-scp -r yazmina-hijab-web/ username@server.rumahweb.com:/home/username/
+scp -r yazmina-hijab-web/backend/ username@server:/home/username/yazmina-hijab-web/backend/
 ```
 
-#### 3. Setup Python App di cPanel
+### Step 4: Install Dependencies via Terminal
 
-1. Login cPanel → **Software** → **Setup Python App**
-2. Klik **Create Application**
-3. Pilih Python version: **3.11** atau **3.12**
-4. Application root: `/home/username/yazmina-hijab-web/backend`
-5. Application startup file: `app/main.py`
-6. Application URL: `/api` (atau subdomain)
-7. Klik **Create**
-
-#### 4. Install Dependencies
+1. Buka **Terminal** di cPanel (atau SSH)
+2. Jalankan perintah berikut:
 
 ```bash
-# Via SSH
+# Aktifkan virtual environment
+source /home/username/virtualenv/yazmina-hijab-web/3.11/bin/activate
+
+# Install dependencies
 cd /home/username/yazmina-hijab-web/backend
-source venv/bin/activate
 pip install -r requirements.txt
+
+# Install gunicorn (untuk production)
+pip install gunicorn
 ```
 
-#### 5. Setup Environment
+> **Catatan:** Path virtual environment mungkin berbeda. Lihat di menu Python App → ada info "source" command.
+
+### Step 5: Buat File .env
 
 ```bash
-# Buat file .env
+cd /home/username/yazmina-hijab-web/backend
+
 cat > .env << 'EOF'
 DATABASE_URL=postgresql://neondb_owner:YOUR_PASSWORD@ep-YOUR-ENDPOINT.aws.neon.tech/neondb?sslmode=require
-SECRET_KEY=your-random-secret-key-here
+SECRET_KEY=ganti-dengan-random-string-yang-panjang
 JWT_ALGORITHM=HS256
 ACCESS_TOKEN_EXPIRE_HOURS=12
 APP_NAME=Yazmina Hijab
@@ -81,248 +119,74 @@ CORS_ORIGINS=https://yourdomain.com,http://yourdomain.com
 EOF
 ```
 
-#### 6. Setup Static Files (Frontend)
+**Ganti:**
+- `YOUR_PASSWORD` → password Neon kamu
+- `YOUR_ENDPOINT` → endpoint Neon kamu
+- `yourdomain.com` → domain kamu
+- `SECRET_KEY` → random string (bisa generate di https://randomkeygen.com)
 
-**Via .htaccess di public_html:**
-
-```apache
-# /home/username/public_html/.htaccess
-RewriteEngine On
-
-# API routes → FastAPI backend
-RewriteRule ^api/(.*)$ /api/$1 [L]
-
-# Everything else → React static files
-RewriteCond %{REQUEST_FILENAME} !-f
-RewriteCond %{REQUEST_FILENAME} !-d
-RewriteRule ^(.*)$ /yazmina-hijab-web/frontend/dist/index.html [L]
-```
-
-**Atau gunakan subdomain:**
-- `app.yourdomain.com` → FastAPI backend
-- `yourdomain.com` → React frontend (static)
-
-#### 7. Setup SSL
-
-1. cPanel → **Security** → **SSL/TLS**
-2. Atau **Let's Encrypt** → Issue SSL untuk domain
-
-#### 8. Test
+### Step 6: Setup Admin User
 
 ```bash
-# Test backend
-curl https://yourdomain.com/api/health
-
-# Buka di browser
-https://yourdomain.com
-```
-
----
-
-## Opsi 2: VPS Ubuntu — FULL CONTROL
-
-**Paket minimal:** VPS 1 vCPU, 2 GB RAM (Rp 150.000/bulan)
-
-### Kelebihan
-- ✅ Full root access
-- ✅ Bisa install apa saja
-- ✅ Nginx + Gunicorn (performa lebih baik)
-- ✅ Domain + SSL gratis
-
-### Langkah Deploy
-
-#### 1. Setup VPS
-
-```bash
-# SSH ke VPS
-ssh root@YOUR_VPS_IP
-
-# Update system
-apt update && apt upgrade -y
-
-# Install Python 3.11+
-apt install python3.11 python3.11-venv python3-pip -y
-
-# Install Nginx
-apt install nginx -y
-
-# Install supervisor (auto-restart)
-apt install supervisor -y
-```
-
-#### 2. Upload Project
-
-```bash
-# Dari komputer lokal
-scp -r yazmina-hijab-web/ root@YOUR_VPS_IP:/opt/
-
-# Atau clone dari GitHub
-cd /opt
-git clone https://github.com/Kasolid12/Essa-Store-App.git
-cd Essa-Store-App/yazmina-hijab-web
-```
-
-#### 3. Setup Backend
-
-```bash
-cd /opt/yazmina-hijab-web/backend
-
-# Buat virtual environment
-python3.11 -m venv venv
-source venv/bin/activate
-
-# Install dependencies
-pip install -r requirements.txt
-
-# Buat .env
-cat > .env << 'EOF'
-DATABASE_URL=postgresql://neondb_owner:YOUR_PASSWORD@ep-YOUR-ENDPOINT.aws.neon.tech/neondb?sslmode=require
-SECRET_KEY=your-random-secret-key-here
-JWT_ALGORITHM=HS256
-ACCESS_TOKEN_EXPIRE_HOURS=12
-APP_NAME=Yazmina Hijab
-APP_VERSION=0.1.0
-DEBUG=false
-CORS_ORIGINS=https://yourdomain.com
-EOF
-
-# Setup admin
+cd /home/username/yazmina-hijab-web/backend
+source /home/username/virtualenv/yazmina-hijab-web/3.11/bin/activate
 python setup_dev.py --auto
 ```
 
-#### 4. Build Frontend
+### Step 7: Upload Frontend (Static Files)
 
-```bash
-cd /opt/yazmina-hijab-web/frontend
-npm install
-npm run build
-# Output: dist/
+1. Buka **File Manager** → navigasi ke `/home/username/public_html/`
+2. Buat folder `app` → upload isi `frontend/dist/` ke dalamnya
+3. Hasilnya:
+   ```
+   public_html/
+   ├── app/
+   │   ├── index.html
+   │   └── assets/
+   │       ├── index-xxx.js
+   │       └── index-xxx.css
+   └── .htaccess
+   ```
+
+### Step 8: Buat .htaccess
+
+Buat file `.htaccess` di `/home/username/public_html/`:
+
+```apache
+RewriteEngine On
+
+# Redirect API ke FastAPI backend (via Passenger)
+RewriteCond %{REQUEST_URI} ^/api/
+RewriteRule ^api/(.*)$ /app/main.py/$1 [L,QSA]
+
+# Frontend: serve static files
+RewriteCond %{REQUEST_FILENAME} !-f
+RewriteCond %{REQUEST_FILENAME} !-d
+RewriteRule ^(.*)$ /app/index.html [L]
 ```
 
-#### 5. Setup Gunicorn
+**Atau cara yang lebih simpel (tanpa .htaccess复杂):**
 
-```bash
-# Install gunicorn
-pip install gunicorn
+Letakkan frontend di `public_html/` langsung:
 
-# Test run
-cd /opt/yazmina-hijab-web/backend
-gunicorn app.main:app -w 4 -k uvicorn.workers.UvicornWorker -b 127.0.0.1:8765
+```
+public_html/
+├── index.html          ← dari frontend/dist/
+├── assets/             ← dari frontend/dist/assets/
+├── api/                ← symlink ke backend (atau proxy)
+└── .htaccess
 ```
 
-#### 6. Setup Supervisor (Auto-restart)
+### Step 9: Restart Python App
 
-```bash
-cat > /etc/supervisor/conf.d/yazmina-web.conf << 'EOF'
-[program:yazmina-web]
-command=/opt/yazmina-hijab-web/backend/venv/bin/gunicorn app.main:app -w 4 -k uvicorn.workers.UvicornWorker -b 127.0.0.1:8765
-directory=/opt/yazmina-hijab-web/backend
-user=www-data
-autostart=true
-autorestart=true
-stderr_logfile=/var/log/yazmina-web/stderr.log
-stdout_logfile=/var/log/yazmina-web/stdout.log
-environment=
-    PYTHONUNBUFFERED=1,
-    DATABASE_URL="postgresql://neondb_owner:YOUR_PASSWORD@ep-YOUR-ENDPOINT.aws.neon.tech/neondb?sslmode=require",
-    SECRET_KEY="your-random-secret-key"
-EOF
+1. Kembali ke cPanel → **Setup Python App**
+2. Klik **"Restart"** pada aplikasi yang sudah dibuat
+3. Tunggu beberapa detik
 
-# Buat folder log
-mkdir -p /var/log/yazmina-web
-
-# Reload supervisor
-supervisorctl reread
-supervisorctl update
-supervisorctl start yazmina-web
-```
-
-#### 7. Setup Nginx
-
-```bash
-cat > /etc/nginx/sites-available/yazmina << 'EOF'
-server {
-    listen 80;
-    server_name yourdomain.com www.yourdomain.com;
-
-    # Redirect to HTTPS
-    return 301 https://$host$request_uri;
-}
-
-server {
-    listen 443 ssl http2;
-    server_name yourdomain.com www.yourdomain.com;
-
-    # SSL (Let's Encrypt)
-    ssl_certificate /etc/letsencrypt/live/yourdomain.com/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/yourdomain.com/privkey.pem;
-
-    # Frontend (React static files)
-    root /opt/yazmina-hijab-web/frontend/dist;
-    index index.html;
-
-    # API → Backend
-    location /api/ {
-        proxy_pass http://127.0.0.1:8765;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-    }
-
-    # React Router (SPA)
-    location / {
-        try_files $uri $uri/ /index.html;
-    }
-
-    # Cache static assets
-    location ~* \.(js|css|png|jpg|jpeg|gif|ico|svg|woff|woff2)$ {
-        expires 1y;
-        add_header Cache-Control "public, immutable";
-    }
-}
-EOF
-
-# Aktifkan site
-ln -s /etc/nginx/sites-available/yazmina /etc/nginx/sites-enabled/
-rm /etc/nginx/sites-enabled/default
-
-# Test config
-nginx -t
-
-# Reload nginx
-systemctl reload nginx
-```
-
-#### 8. Setup SSL (Let's Encrypt)
-
-```bash
-# Install certbot
-apt install certbot python3-certbot-nginx -y
-
-# Issue SSL certificate
-certbot --nginx -d yourdomain.com -d www.yourdomain.com
-
-# Auto-renew
-certbot renew --dry-run
-```
-
-#### 9. Setup Firewall
-
-```bash
-# Allow HTTP/HTTPS
-ufw allow 'Nginx Full'
-ufw allow ssh
-ufw enable
-```
-
-#### 10. Test
+### Step 10: Test
 
 ```bash
 # Test backend
-curl http://localhost:8765/api/health
-
-# Test nginx
 curl https://yourdomain.com/api/health
 
 # Buka di browser
@@ -331,58 +195,41 @@ https://yourdomain.com
 
 ---
 
-## Opsi 3: Deploy ke Cloud Gratis (Alternatif)
+## Konfigurasi Alternative: Subdomain untuk API
 
-Jika ingin coba dulu sebelum bayar hosting:
+Jika `.htaccess` rumit, gunakan subdomain terpisah:
 
-### Railway.app (Recommended)
-```bash
-# Install Railway CLI
-npm install -g @railway/cli
-
-# Login
-railway login
-
-# Init project
-cd yazmina-hijab-web/backend
-railway init
-
-# Set env vars
-railway variables set DATABASE_URL="postgresql://..."
-railway variables set SECRET_KEY="..."
-
-# Deploy
-railway up
+### Backend (API)
+```
+api.yourdomain.com → FastAPI backend
 ```
 
-### Render.com
-1. Push ke GitHub
-2. Login render.com → New → Web Service
-3. Connect GitHub repo
-4. Build command: `cd backend && pip install -r requirements.txt`
-5. Start command: `cd backend && gunicorn app.main:app -w 4 -k uvicorn.workers.UvicornWorker`
-6. Set env vars
+**Setup di cPanel:**
+1. **Subdomains** → buat `api` → document root: `/home/username/yazmina-hijab-web/backend`
+2. **Setup Python App** → Application URL: `api.yourdomain.com`
 
-### Fly.io
-```bash
-curl -L https://fly.io/install.sh | sh
-fly auth signup
-fly launch
-fly deploy
+### Frontend
+```
+yourdomain.com → React static files
 ```
 
----
+**Setup di cPanel:**
+1. Document root: `/home/username/public_html/`
+2. Upload `frontend/dist/` ke sana
 
-## Checklist Deploy
+### Update CORS
 
-- [ ] Backend compile OK (`python -m py_compile app/main.py`)
-- [ ] Frontend build OK (`npm run build`)
-- [ ] `.env` sudah diisi dengan Neon URL + SECRET_KEY
-- [ ] `CORS_ORIGINS` sudah diupdate ke domain production
-- [ ] SSL sudah aktif
-- [ ] `setup_dev.py --auto` sudah dijalankan (buat admin)
-- [ ] Test login: `https://yourdomain.com` → admin/admin123
-- [ ] Test API: `curl https://yourdomain.com/api/health`
+```bash
+# Di .env backend
+CORS_ORIGINS=https://yourdomain.com,https://api.yourdomain.com
+```
+
+### Update Frontend API URL
+
+```javascript
+// Di frontend/src/api/client.js
+const API_BASE = 'https://api.yourdomain.com/api';
+```
 
 ---
 
@@ -390,23 +237,65 @@ fly deploy
 
 | Masalah | Solusi |
 |---|---|
-| 502 Bad Gateway | Cek apakah Gunicorn berjalan: `supervisorctl status` |
-| CORS error | Update `CORS_ORIGINS` di `.env` |
-| Static files 404 | Cek path `root` di Nginx config |
-| Database connection | Test: `python -c "from app.database import engine; print(engine.url)"` |
-| SSL error | Re-issue: `certbot --nginx -d yourdomain.com` |
+| **Menu "Setup Python App" tidak ada** | Paket hosting tidak mendukung Python. Upgrade ke GROW atau BLOOM |
+| **502 Bad Gateway** | Cek Python App status → Restart |
+| **ModuleNotFoundError** | Jalankan `pip install` lagi via Terminal |
+| **Database connection error** | Cek file `.env`, pasti Neon URL benar |
+| **CORS error** | Update `CORS_ORIGINS` di `.env` |
+| **Static files 404** | Cek path upload di File Manager |
+| **Python App tidak bisa start** | Cek error log: File Manager → `stderr.log` |
+
+### Cek Error Log
+
+```
+File Manager → /home/username/yazmina-hijab-web/backend/stderr.log
+```
 
 ---
 
-## Biaya Estimasi
+## Tips Performa (Paket GROW 1GB RAM)
 
-| Opsi | Biaya/bulan | Cocok Untuk |
-|---|---|---|
-| Cloud Hosting 10GB | Rp 120.000 | Uji coba, 1-5 user |
-| Cloud Hosting 30GB | Rp 360.000 | Produksi, 5-20 user |
-| VPS 1 vCPU 2GB | Rp 150.000 | Produksi, full control |
-| Railway (free tier) | Gratis | Uji coba, 500 jam/bulan |
-| Render (free tier) | Gratis | Uji coba, sleep 15 menit |
+1. **Gunakan Gunicorn** (bukan uvicorn langsung):
+   ```bash
+   gunicorn app.main:app -w 2 -k uvicorn.workers.UvicornWorker -b 127.0.0.1:8765
+   ```
+   `-w 2` = 2 worker (hemat RAM)
+
+2. **Nonaktifkan DEBUG:**
+   ```
+   DEBUG=false
+   ```
+
+3. **Cache static assets** via `.htaccess`:
+   ```apache
+   <IfModule mod_expires.c>
+     ExpiresActive On
+     ExpiresByType text/css "access plus 1 year"
+     ExpiresByType application/javascript "access plus 1 year"
+   </IfModule>
+   ```
+
+---
+
+## Estimasi Biaya
+
+| Item | Biaya |
+|---|---|
+| Hosting GROW (Rp 29.900/bulan) | Rp 29.900 |
+| Domain .com (tahun pertama gratis di BLOOM) | Rp 0 - 150.000/tahun |
+| Neon PostgreSQL (free tier) | Gratis |
+| **Total** | **~Rp 30.000/bulan** |
+
+---
+
+## Ringkasan URL
+
+| Service | URL |
+|---|---|
+| cPanel | `https://yourdomain.com:2083` |
+| Frontend | `https://yourdomain.com` |
+| Backend API | `https://yourdomain.com/api` |
+| Neon Dashboard | `https://console.neon.tech` |
 
 ---
 
