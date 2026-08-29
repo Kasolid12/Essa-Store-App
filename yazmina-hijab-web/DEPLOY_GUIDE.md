@@ -1,302 +1,284 @@
-# 🚀 Panduan Deploy Yazmina Hijab Web ke Rumahweb Unlimited Hosting
+# 🚀 Panduan Deploy Yazmina Hijab Web
 
-## ✅ Status: BISA Deploy!
+## Ringkasan Opsi Deploy
 
-Rumahweb Unlimited Hosting **mendukung Python & FastAPI** pada paket **GROW** dan **BLOOM**.
+| Opsi | Biaya | Kartu Kredit | Kesulitan | Status |
+|---|---|---|---|---|
+| **[Koyeb](#opsi-1-koyeb-gratis)** | Gratis | ❌ Tidak perlu | ⭐ Mudah | ✅ **Recommended** |
+| [Render](#opsi-2-render-gratis) | Gratis | ⚠️ Kadang diminta | ⭐ Mudah | ✅ Alternatif |
+| [Rumahweb](#opsi-3-rumahweb-hosting) | Rp 30rb/bln | ❌ Tidak perlu | ⭐⭐ Sedang | ✅ Kalau sudah punya hosting |
 
-### Cek Paket Hosting Kamu
-
-| Paket | Harga | Python | SSH | RAM | Status |
-|---|---|---|---|---|---|
-| **SEED** | Rp 17.900/bln | ❌ Tidak | ❌ Tidak | 512MB | ❌ Tidak cukup |
-| **GROW** | Rp 29.900/bln | ✅ Ya | ✅ Ya | 1GB | ✅ Bisa (minimal) |
-| **BLOOM** | Rp 49.900/bln | ✅ Ya | ✅ Ya | 2GB | ✅ Recommended |
-
-> **Cara cek paket:** Login cPanel → lihat di bagian atas atau menu "Statistics"
+> **Rekomendasi:** Mulai dari **Koyeb** (gratis, tanpa kartu kredit, paling mudah).
 
 ---
 
-## Persiapan Sebelum Deploy
+## Opsi 1: Koyeb (GRATIS) ✅ Recommended
 
-### 1. Pastikan Paket Mendukung Python
+### Kenapa Koyeb?
 
-Login cPanel → cari menu **"Setup Python App"** di bagian **Software**.
+- ✅ **Tidak butuh kartu kredit** — daftar langsung deploy
+- ✅ **Full server** (bukan serverless) — FastAPI berjalan normal
+- ✅ **Free forever** — bukan trial
+- ✅ **Auto-deploy dari GitHub** — push = deploy
+- ✅ **Docker support** — sudah ada Dockerfile
 
-- ✅ **Ada menu "Setup Python App"** → Paket kamu mendukung Python
-- ❌ **Tidak ada menu** → Paket kamu tidak mendukung (SEED), perlu upgrade
+### Langkah 1: Siapkan GitHub
 
-### 2. Build Frontend di Lokal
+Pastikan kode sudah di-push ke GitHub:
 
 ```bash
-cd yazmina-hijab-web/frontend
-npm install
-npm run build
-# Output: folder dist/ (berisi index.html, CSS, JS)
+cd "D:/Hasil Minggu Ini/Essa-Store-App"
+git add .
+git commit -m "Deploy to Koyeb"
+git push origin main
 ```
 
-### 3. Siapkan File yang Perlu Diupload
+### Langkah 2: Daftar Koyeb
+
+1. Buka **https://app.koyeb.com**
+2. Klik **Sign up** → pilih **Sign up with GitHub**
+3. Authorize Koyeb untuk akses repo kamu
+4. **Selesai!** Tidak diminta kartu kredit
+
+### Langkah 3: Create Service
+
+1. Klik **Create Service** → pilih **Git**
+2. Pilih repo **Kasolid12/Essa-Store-App**
+3. Isi config:
 
 ```
-yazmina-hijab-web/
-├── backend/
-│   ├── app/                    ← Upload semua
-│   ├── requirements.txt        ← Upload
-│   ├── setup_dev.py            ← Upload
-│   └── .env                    ← Buat baru di server
-├── frontend/
-│   └── dist/                   ← Upload (hasil build)
-└── .htaccess                   ← Buat baru di public_html
+Name:           yazmina-hijab
+Builder:        Dockerfile
+Dockerfile Path: yazmina-hijab-web/Dockerfile
+Port:           8000
 ```
+
+4. Klik **Advanced** → tambah **Environment Variables**:
+
+```
+DATABASE_URL    = postgresql://neondb_owner:xxx@ep-xxx.ap-southeast-1.aws.neon.tech/neondb?sslmode=require
+SECRET_KEY      = <buat random string panjang>
+CORS_ORIGINS    = https://yazmina-hijab.koyeb.app
+APP_NAME        = Yazmina Hijab Web
+APP_VERSION     = 1.0.0
+```
+
+5. Klik **Deploy** → tunggu 3-5 menit
+
+### Langkah 4: Aplikasi Live!
+
+Setelah deploy selesai, Koyeb memberikan URL:
+
+```
+https://yazmina-hijab.koyeb.app
+```
+
+Buka di browser → Login dengan:
+- **Username:** admin
+- **Password:** admin123
+
+### Arsitektur Deploy
+
+```
+Koyeb (Free)
+├── Docker Container
+│   ├── FastAPI Backend (uvicorn, port 8000)
+│   │   ├── /api/* → API endpoints
+│   │   ├── /assets/* → React static files
+│   │   └── /* → React SPA (index.html)
+│   └── Frontend (React built inside Docker)
+└── Neon PostgreSQL (Cloud) ← sudah terkoneksi
+```
+
+### Update Deploy
+
+Setiap kali ada perubahan kode:
+
+```bash
+git add .
+git commit -m "Update fitur xyz"
+git push origin main
+# Koyeb otomatis rebuild & deploy (~3-5 menit)
+```
+
+### Limitasi Free Tier
+
+- 1 service
+- 512MB RAM
+- 100 jam/bulan (auto-sleep saat idle, wake ~10-30 detik)
+- Custom domain memerlukan upgrade
 
 ---
 
-## Langkah Deploy (Step by Step)
+## Opsi 2: Render (GRATIS)
 
-### Step 1: Login cPanel
+> **Catatan:** Render kadang meminta kartu kredit saat registrasi. Kalau kamu sudah berhasil registrasi tanpa kartu kredit, ini alternatif yang bagus.
 
-1. Buka `https://yourdomain.com:2083` atau `https://server.rumahweb.com:2083`
-2. Masukkan username & password cPanel
+### Langkah Deploy
 
-### Step 2: Setup Python App
+1. Buka **https://render.com** → Daftar dengan GitHub
+2. **New +** → **Web Service** → Connect repo **Kasolid12/Essa-Store-App**
+3. Isi config:
 
-1. Cari menu **"Setup Python App"** di bagian **Software**
-2. Klik **"Create Application"**
-3. Isi konfigurasi:
-   - **Python Version:** `3.11` atau `3.12` (pilih yang tersedia)
-   - **Application Root:** `yazmina-hijab-web/backend`
-   - **Application URL:** `(kosongkan untuk akses via domain utama)`
-   - **Application Startup File:** `app/main.py`
-4. Klik **"Create"**
-
-### Step 3: Upload File Backend
-
-**Via File Manager cPanel:**
-
-1. Buka **File Manager**
-2. Navigasi ke `/home/username/yazmina-hijab-web/`
-3. Upload folder `backend/app/` dan `backend/requirements.txt` dan `backend/setup_dev.py`
-
-**Via SSH (lebih cepat):**
-
-```bash
-# Dari komputer lokal
-scp -r yazmina-hijab-web/backend/ username@server:/home/username/yazmina-hijab-web/backend/
+```
+Name:           yazmina-hijab
+Runtime:        Docker
+Dockerfile:     yazmina-hijab-web/Dockerfile
+Port:           8000
 ```
 
-### Step 4: Install Dependencies via Terminal
+4. Set **Environment Variables** (sama seperti Koyeb)
+5. **Create Web Service** → Tunggu 5-10 menit
 
-1. Buka **Terminal** di cPanel (atau SSH)
-2. Jalankan perintah berikut:
+### Limitasi Free Tier
+
+- 750 jam/bulan
+- Auto-sleep setelah 15 menit idle
+- Cold start 30-50 detik
+
+---
+
+## Opsi 3: Rumahweb Hosting
+
+> **Catatan:** Paket SEED tidak support Python. Minimal paket **GROW** (Rp 29.900/bln) atau **BLOOM** (Rp 49.900/bln).
+
+### Langkah Deploy
+
+1. Login cPanel → **Setup Python App** → **Create Application**
+2. Upload backend via File Manager atau SSH
+3. Install dependencies via Terminal:
 
 ```bash
-# Aktifkan virtual environment
-source /home/username/virtualenv/yazmina-hijab-web/3.11/bin/activate
-
-# Install dependencies
-cd /home/username/yazmina-hijab-web/backend
+cd ~/yazmina-hijab-web/backend
 pip install -r requirements.txt
-
-# Install gunicorn (untuk production)
-pip install gunicorn
 ```
 
-> **Catatan:** Path virtual environment mungkin berbeda. Lihat di menu Python App → ada info "source" command.
+4. Buat `.env` dengan Neon URL
+5. Upload `frontend/dist/` ke folder yang benar
+6. Restart Python App
 
-### Step 5: Buat File .env
+> Panduan lengkap: lihat bagian [Deploy ke Rumahweb](#opsi-3-rumahweb-hosting) di bawah.
+
+---
+
+## Environment Variables
+
+Berikut semua env vars yang dibutuhkan:
+
+| Variable | Required | Contoh |
+|---|---|---|
+| `DATABASE_URL` | ✅ | `postgresql://user:pass@host/db?sslmode=require` |
+| `SECRET_KEY` | ✅ | `my-super-secret-key-123456` |
+| `CORS_ORIGINS` | ✅ | `https://your-app.koyeb.app` |
+| `APP_NAME` | ⚙️ | `Yazmina Hijab Web` |
+| `APP_VERSION` | ⚙️ | `1.0.0` |
+
+### Generate SECRET_KEY
 
 ```bash
-cd /home/username/yazmina-hijab-web/backend
-
-cat > .env << 'EOF'
-DATABASE_URL=postgresql://neondb_owner:YOUR_PASSWORD@ep-YOUR-ENDPOINT.aws.neon.tech/neondb?sslmode=require
-SECRET_KEY=ganti-dengan-random-string-yang-panjang
-JWT_ALGORITHM=HS256
-ACCESS_TOKEN_EXPIRE_HOURS=12
-APP_NAME=Yazmina Hijab
-APP_VERSION=0.1.0
-DEBUG=false
-CORS_ORIGINS=https://yourdomain.com,http://yourdomain.com
-EOF
+python -c "import secrets; print(secrets.token_hex(32))"
 ```
 
-**Ganti:**
-- `YOUR_PASSWORD` → password Neon kamu
-- `YOUR_ENDPOINT` → endpoint Neon kamu
-- `yourdomain.com` → domain kamu
-- `SECRET_KEY` → random string (bisa generate di https://randomkeygen.com)
+### Buat Admin User
 
-### Step 6: Setup Admin User
+Setelah deploy pertama kali, jalankan sekali:
 
 ```bash
-cd /home/username/yazmina-hijab-web/backend
-source /home/username/virtualenv/yazmina-hijab-web/3.11/bin/activate
+cd backend
 python setup_dev.py --auto
 ```
 
-### Step 7: Upload Frontend (Static Files)
-
-1. Buka **File Manager** → navigasi ke `/home/username/public_html/`
-2. Buat folder `app` → upload isi `frontend/dist/` ke dalamnya
-3. Hasilnya:
-   ```
-   public_html/
-   ├── app/
-   │   ├── index.html
-   │   └── assets/
-   │       ├── index-xxx.js
-   │       └── index-xxx.css
-   └── .htaccess
-   ```
-
-### Step 8: Buat .htaccess
-
-Buat file `.htaccess` di `/home/username/public_html/`:
-
-```apache
-RewriteEngine On
-
-# Redirect API ke FastAPI backend (via Passenger)
-RewriteCond %{REQUEST_URI} ^/api/
-RewriteRule ^api/(.*)$ /app/main.py/$1 [L,QSA]
-
-# Frontend: serve static files
-RewriteCond %{REQUEST_FILENAME} !-f
-RewriteCond %{REQUEST_FILENAME} !-d
-RewriteRule ^(.*)$ /app/index.html [L]
-```
-
-**Atau cara yang lebih simpel (tanpa .htaccess复杂):**
-
-Letakkan frontend di `public_html/` langsung:
-
-```
-public_html/
-├── index.html          ← dari frontend/dist/
-├── assets/             ← dari frontend/dist/assets/
-├── api/                ← symlink ke backend (atau proxy)
-└── .htaccess
-```
-
-### Step 9: Restart Python App
-
-1. Kembali ke cPanel → **Setup Python App**
-2. Klik **"Restart"** pada aplikasi yang sudah dibuat
-3. Tunggu beberapa detik
-
-### Step 10: Test
+Atau buat manual via API:
 
 ```bash
-# Test backend
-curl https://yourdomain.com/api/health
-
-# Buka di browser
-https://yourdomain.com
-```
-
----
-
-## Konfigurasi Alternative: Subdomain untuk API
-
-Jika `.htaccess` rumit, gunakan subdomain terpisah:
-
-### Backend (API)
-```
-api.yourdomain.com → FastAPI backend
-```
-
-**Setup di cPanel:**
-1. **Subdomains** → buat `api` → document root: `/home/username/yazmina-hijab-web/backend`
-2. **Setup Python App** → Application URL: `api.yourdomain.com`
-
-### Frontend
-```
-yourdomain.com → React static files
-```
-
-**Setup di cPanel:**
-1. Document root: `/home/username/public_html/`
-2. Upload `frontend/dist/` ke sana
-
-### Update CORS
-
-```bash
-# Di .env backend
-CORS_ORIGINS=https://yourdomain.com,https://api.yourdomain.com
-```
-
-### Update Frontend API URL
-
-```javascript
-// Di frontend/src/api/client.js
-const API_BASE = 'https://api.yourdomain.com/api';
+curl -X POST https://your-app.koyeb.app/api/auth/register \
+  -H "Content-Type: application/json" \
+  -d '{"username": "admin", "password": "admin123"}'
 ```
 
 ---
 
 ## Troubleshooting
 
-| Masalah | Solusi |
-|---|---|
-| **Menu "Setup Python App" tidak ada** | Paket hosting tidak mendukung Python. Upgrade ke GROW atau BLOOM |
-| **502 Bad Gateway** | Cek Python App status → Restart |
-| **ModuleNotFoundError** | Jalankan `pip install` lagi via Terminal |
-| **Database connection error** | Cek file `.env`, pasti Neon URL benar |
-| **CORS error** | Update `CORS_ORIGINS` di `.env` |
-| **Static files 404** | Cek path upload di File Manager |
-| **Python App tidak bisa start** | Cek error log: File Manager → `stderr.log` |
+### App tidak bisa diakses
+- Cek logs di dashboard Koyeb/Render
+- Pastikan `DATABASE_URL` benar dan bisa diakses dari internet
+- Pastikan Neon database tidak sleeping (free tier punya limit)
 
-### Cek Error Log
+### Cold start lambat
+- Koyeb: ~10-30 detik wake dari sleep
+- Render: ~30-50 detik cold start
+- Ini normal untuk free tier
 
-```
-File Manager → /home/username/yazmina-hijab-web/backend/stderr.log
-```
+### Error "could not translate host name"
+- Cek `DATABASE_URL` di env vars
+- Pastikan Neon database masih active (buka Neon dashboard)
+
+### Admin user hilang
+- Jalankan `python setup_dev.py --auto` atau buat ulang via API
+- Data di Neon persist, tidak hilang saat deploy baru
 
 ---
 
-## Tips Performa (Paket GROW 1GB RAM)
+## Arsitektur Final
 
-1. **Gunakan Gunicorn** (bukan uvicorn langsung):
-   ```bash
-   gunicorn app.main:app -w 2 -k uvicorn.workers.UvicornWorker -b 127.0.0.1:8765
-   ```
-   `-w 2` = 2 worker (hemat RAM)
+```
+┌─────────────────────────────────────────────────┐
+│                  USER (Browser)                  │
+│              https://your-app.koyeb.app          │
+└──────────────────────┬──────────────────────────┘
+                       │
+                       ▼
+┌─────────────────────────────────────────────────┐
+│              Koyeb / Render (Free)              │
+│  ┌───────────────────────────────────────────┐  │
+│  │  FastAPI Backend (uvicorn, port 8000)     │  │
+│  │                                           │  │
+│  │  /api/*  → API endpoints (JSON)           │  │
+│  │  /assets → React static files             │  │
+│  │  /*      → React SPA (index.html)         │  │
+│  └───────────────────────────────────────────┘  │
+└──────────────────────┬──────────────────────────┘
+                       │
+                       ▼
+┌─────────────────────────────────────────────────┐
+│            Neon PostgreSQL (Cloud)              │
+│         Shared dengan Desktop App               │
+│                                                 │
+│  1,022 SKUs · 316 Hutang · 182 Gaji · ...     │
+└─────────────────────────────────────────────────┘
 
-2. **Nonaktifkan DEBUG:**
-   ```
-   DEBUG=false
-   ```
+┌─────────────────────────────────────────────────┐
+│            Desktop App (PySide6)                │
+│         Jalan di komputer lokal                 │
+│         Koneksi ke Neon yang sama               │
+└─────────────────────────────────────────────────┘
+```
 
-3. **Cache static assets** via `.htaccess`:
-   ```apache
-   <IfModule mod_expires.c>
-     ExpiresActive On
-     ExpiresByType text/css "access plus 1 year"
-     ExpiresByType application/javascript "access plus 1 year"
-   </IfModule>
-   ```
+### Sinkronisasi Data
+
+```
+Desktop App ←→ Neon PostgreSQL ←→ Web App
+```
+
+Kedua aplikasi share data yang sama di cloud. Perubahan di desktop langsung terlihat di web, dan sebaliknya.
 
 ---
 
 ## Estimasi Biaya
 
-| Item | Biaya |
-|---|---|
-| Hosting GROW (Rp 29.900/bulan) | Rp 29.900 |
-| Domain .com (tahun pertama gratis di BLOOM) | Rp 0 - 150.000/tahun |
-| Neon PostgreSQL (free tier) | Gratis |
-| **Total** | **~Rp 30.000/bulan** |
+```
+Koyeb (Free):    Rp 0/bulan
+Neon DB (Free):  Rp 0/bulan
+Domain (.com):   Rp 0 (optional, bisa pakai .koyeb.app gratis)
+─────────────────────────────────
+Total:           Rp 0/bulan (GRATIS!)
+```
 
----
-
-## Ringkasan URL
-
-| Service | URL |
-|---|---|
-| cPanel | `https://yourdomain.com:2083` |
-| Frontend | `https://yourdomain.com` |
-| Backend API | `https://yourdomain.com/api` |
-| Neon Dashboard | `https://console.neon.tech` |
-
----
-
-*Terakhir diperbarui: Agustus 2026*
+Kalau butuh custom domain + always-on:
+```
+Koyeb Pro:       ~$5/bulan (~Rp 80.000)
+Domain .com:     ~Rp 150.000/tahun (~Rp 12.500/bulan)
+─────────────────────────────────
+Total:           ~Rp 92.500/bulan
+```

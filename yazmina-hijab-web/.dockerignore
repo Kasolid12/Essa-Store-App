@@ -1,0 +1,36 @@
+# Dependencies
+frontend/node_modules/
+backend/__pycache__/
+backend/**/__pycache__/
+
+# Build artifacts
+frontend/dist/
+frontend/.vite/
+
+# Environment (secrets set via Koyeb dashboard)
+backend/.env
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# Git
+.git/
+.gitignore
+
+# Test files
+backend/test_*.py
+
+# Documentation
+*.md
+!backend/requirements.txt
+
+# Desktop app (not needed for web deploy)
+data/
+ui/
+utils/
+scripts/
+*.db
+*.db-wal
+*.db-shm
