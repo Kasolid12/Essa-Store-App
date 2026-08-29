@@ -3,11 +3,13 @@ Yazmina Hijab Web — FastAPI Application.
 
 Entry point: run with `uvicorn app.main:app --reload`.
 """
-
+import os
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 
 from .config import get_settings
 from .database import engine, Base
@@ -78,3 +80,23 @@ app.include_router(stock_router)
 @app.get("/api/health")
 def health():
     return {"status": "ok", "app": settings.APP_NAME, "version": settings.APP_VERSION}
+
+
+# ── Serve Frontend Static Files ──────────────────────────────────────
+# In production, serve React build from frontend/dist/
+# In development, Vite proxy handles this.
+FRONTEND_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "frontend", "dist")
+
+if os.path.isdir(FRONTEND_DIR):
+    # Mount static assets (JS, CSS, images)
+    app.mount("/assets", StaticFiles(directory=os.path.join(FRONTEND_DIR, "assets")), name="static-assets")
+
+    @app.get("/{full_path:path}")
+    async def serve_spa(request: Request, full_path: str):
+        """Serve React SPA — all non-API routes return index.html."""
+        # Try to serve the exact file first
+        file_path = os.path.join(FRONTEND_DIR, full_path)
+        if full_path and os.path.isfile(file_path):
+            return FileResponse(file_path)
+        # Fallback to index.html for React Router
+        return FileResponse(os.path.join(FRONTEND_DIR, "index.html"))

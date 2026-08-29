@@ -1,0 +1,38 @@
+# Render.com deployment configuration
+# Docs: https://render.com/docs/render.yaml
+
+services:
+  - type: web
+    name: yazmina-hijab-web
+    runtime: python
+    plan: free
+    buildCommand: |
+      cd backend
+      pip install -r requirements.txt
+      cd ../frontend
+      npm install
+      npm run build
+    startCommand: |
+      cd backend
+      gunicorn app.main:app -w 2 -k uvicorn.workers.UvicornWorker -b 0.0.0.0:$PORT
+    envVars:
+      - key: DATABASE_URL
+        sync: false  # Set manually in Render dashboard
+      - key: SECRET_KEY
+        generateValue: true
+      - key: JWT_ALGORITHM
+        value: HS256
+      - key: ACCESS_TOKEN_EXPIRE_HOURS
+        value: "12"
+      - key: APP_NAME
+        value: Yazmina Hijab
+      - key: APP_VERSION
+        value: "1.0.0"
+      - key: DEBUG
+        value: "false"
+      - key: CORS_ORIGINS
+        value: "https://yazmina-hijab.onrender.com"
+      - key: PYTHON_VERSION
+        value: "3.11.0"
+    healthCheckPath: /api/health
+    autoDeploy: true
