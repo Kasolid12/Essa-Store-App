@@ -18,8 +18,62 @@ from ui.components.dialogs import CopyableErrorDialog
 from ui.theme import Theme
 from data.database import SessionLocal
 from data.models import PengeluaranOffline, Person, Client
-from data.models.invoice import ClientReceivable, ClientReceivablePayment
+from data.models.invoice import ClientReceivable, ClientReceivablePayment, PaymentAllocation
 from utils.pdf_engine import generate_invoice_pdf
+
+
+def compute_transaction_statuses(rows, sales_alloc, payment_alloc=None):
+    """Hitung status LUNAS/PARTIAL/BELUM LUNAS per transaksi.
+
+    Prioritas:
+      1. Alokasi eksplisit (tabel payment_allocations) — mengikuti transaksi
+         yang DIPILIH user saat pelunasan.
+      2. Porsi pembayaran yang BELUM dialokasikan (data lama, atau kelebihan
+         deposit di atas total transaksi terpilih) → fallback FIFO:
+         diterapkan ke penjualan terlama yang masih belum lunas.
+
+    rows: list of dict {jenis: 'Penjualan'|'Pembayaran', debit, credit, ...}
+          baris Penjualan punya 'sid', baris Pembayaran punya 'pid'.
+    sales_alloc: {sales_id: total nominal yang dialokasikan ke transaksi itu}
+    payment_alloc: {payment_id: total nominal payment tsb yang sudah dialokasikan}
+                   None/{} = semua pembayaran dianggap tanpa alokasi (FIFO penuh).
+    Mengisi r['status'] dan r['_sisa'] (sisa belum dibayar) pada tiap baris.
+    """
+    EPS = 0.005  # toleransi pembulatan float rupiah
+    fifo_queue = []  # penjualan yang masih punya sisa, terlama dulu
+
+    for r in rows:
+        if r["jenis"] != "Penjualan":
+            continue
+        allocated = sales_alloc.get(r.get("sid"), 0.0)
+        r["_sisa"] = max(0.0, r["debit"] - allocated)
+        if r["_sisa"] <= EPS:
+            r["status"] = "LUNAS"
+        elif allocated > EPS:
+            r["status"] = "PARTIAL"
+        else:
+            r["status"] = "BELUM LUNAS"
+            fifo_queue.append(r)
+
+    payment_alloc = payment_alloc or {}
+    for r in rows:
+        if r["jenis"] != "Pembayaran":
+            continue
+        # Hanya porsi yang belum dialokasikan yang masuk FIFO
+        # (mencegah double-count untuk pembayaran yang sudah dialokasikan)
+        sisa_bayar = r["credit"] - payment_alloc.get(r.get("pid"), 0.0)
+        while sisa_bayar > EPS and fifo_queue:
+            oldest = fifo_queue[0]
+            pay = min(sisa_bayar, oldest["_sisa"])
+            oldest["_sisa"] -= pay
+            sisa_bayar -= pay
+            if oldest["_sisa"] <= EPS:
+                oldest["status"] = "LUNAS"
+                fifo_queue.pop(0)
+            elif oldest["status"] == "BELUM LUNAS":
+                oldest["status"] = "PARTIAL"
+        r["status"] = "LUNAS"
+    return rows
 
 
 class InvoiceView(QWidget):
@@ -366,35 +420,15 @@ class InvoiceView(QWidget):
     # COMBINED TRANSACTION TABLE (penjualan + pembayaran)
     # ====================================================================
     def load_combined_table(self, person_id):
-        """Satu tabel penjualan + pembayaran dengan running balance & status FIFO."""
+        """Satu tabel penjualan + pembayaran dengan running balance & status
+        per transaksi (alokasi pembayaran eksplisit, fallback FIFO)."""
         self.table.setRowCount(0)
         rows = self._get_combined_rows(person_id)
         if not rows:
             return
 
-        # Komputasi status FIFO: pembayaran diterapkan ke penjualan terlama dulu
-        # Antrian = list of {idx, sisa_belum_dibayar}
-        fifo_queue = []
-
-        for i, r in enumerate(rows):
-            if r["jenis"] == "Penjualan":
-                fifo_queue.append({"idx": i, "sisa": r["debit"]})
-                r["status"] = "BELUM LUNAS"
-            else:  # Pembayaran
-                sisa_bayar = r["credit"]
-                while sisa_bayar > 0 and fifo_queue:
-                    oldest = fifo_queue[0]
-                    if sisa_bayar >= oldest["sisa"]:
-                        # Penjualan ini LUNAS
-                        sisa_bayar -= oldest["sisa"]
-                        rows[oldest["idx"]]["status"] = "LUNAS"
-                        fifo_queue.pop(0)
-                    else:
-                        # Penjualan ini PARTIAL (dibayar sebagian)
-                        oldest["sisa"] -= sisa_bayar
-                        rows[oldest["idx"]]["status"] = "PARTIAL"
-                        sisa_bayar = 0
-                r["status"] = "LUNAS"
+        sales_alloc, payment_alloc = self._get_allocations(person_id, rows)
+        compute_transaction_statuses(rows, sales_alloc, payment_alloc)
 
         # Populasi tabel
         running = 0.0
@@ -402,9 +436,14 @@ class InvoiceView(QWidget):
         for i, r in enumerate(rows):
             running += r["debit"] - r["credit"]
 
-            # Kolom 0: ID transaksi (internal)
+            # Kolom 0: ID transaksi (internal) + metadata untuk aksi lanjutan
             id_item = QTableWidgetItem(str(r.get("id", "")))
-            id_item.setData(Qt.ItemDataRole.UserRole, r.get("id"))
+            id_item.setData(Qt.ItemDataRole.UserRole, {
+                "id": r.get("id"),
+                "sid": r.get("sid"),
+                "debit": r["debit"],
+                "credit": r["credit"],
+            })
             self.table.setItem(i, 0, id_item)
 
             # Kolom 1: Tanggal
@@ -480,6 +519,7 @@ class InvoiceView(QWidget):
                 nama_pembeli = ""
             rows.append({
                 "id": f"S{s.id}",
+                "sid": s.id,
                 "sort_key": (s.tanggal, 0, s.id),
                 "tanggal": s.tanggal,
                 "jenis": "Penjualan",
@@ -507,6 +547,7 @@ class InvoiceView(QWidget):
             for p in payments:
                 rows.append({
                     "id": f"P{p.id}",
+                    "pid": p.id,
                     "sort_key": (p.tanggal_bayar, 1, p.id),
                     "tanggal": p.tanggal_bayar,
                     "jenis": "Pembayaran",
@@ -518,6 +559,50 @@ class InvoiceView(QWidget):
         # Sort by (tanggal, jenis=0 Penjualan dulu, 1 Pembayaran, id)
         rows.sort(key=lambda r: r["sort_key"])
         return rows
+
+    def _get_allocations(self, ref_id, rows):
+        """Ambil alokasi pembayaran untuk klien ini.
+
+        Kembalikan (sales_alloc, payment_alloc):
+          sales_alloc   : {sales_id: total nominal dialokasikan ke transaksi itu}
+                          hanya untuk sales yang tampil di tabel.
+          payment_alloc : {payment_id: total nominal payment tsb yang sudah
+                          dialokasikan} — termasuk alokasi ke sales yang sudah
+                          tidak tampil, agar porsi itu tidak di-FIFO dua kali.
+        """
+        sales_alloc, payment_alloc = {}, {}
+        try:
+            receivable_filter = self._get_filter_field("receivable")
+            receivable = (
+                self.db.query(ClientReceivable)
+                .filter(receivable_filter == ref_id)
+                .first()
+            )
+            if not receivable:
+                return sales_alloc, payment_alloc
+            visible = {int(r["sid"]) for r in rows if r.get("sid")}
+            q = (
+                self.db.query(
+                    PaymentAllocation.payment_id,
+                    PaymentAllocation.sales_id,
+                    PaymentAllocation.nominal,
+                )
+                .join(ClientReceivablePayment,
+                      PaymentAllocation.payment_id == ClientReceivablePayment.id)
+                .filter(ClientReceivablePayment.receivable_id == receivable.id)
+                .all()
+            )
+            for pid, sid, nominal in q:
+                n = float(nominal or 0.0)
+                pid, sid = int(pid), int(sid)
+                payment_alloc[pid] = payment_alloc.get(pid, 0.0) + n
+                if sid in visible:
+                    sales_alloc[sid] = sales_alloc.get(sid, 0.0) + n
+        except Exception:
+            self.db.rollback()
+            # gagal baca alokasi → seluruh pembayaran fallback FIFO
+            return {}, {}
+        return sales_alloc, payment_alloc
 
     # ====================================================================
     # SUMMARY
@@ -588,25 +673,22 @@ class InvoiceView(QWidget):
         self.total_tagihan = 0.0
         has_payment = False
 
-        for row in selected_rows:
+        for row in sorted(selected_rows):  # urut baris tabel = urut tanggal
             jenis_item = self.table.item(row, 2)
             if not jenis_item:
                 continue
 
-            row_id = self.table.item(row, 0).text() if self.table.item(row, 0) else ""
+            item0 = self.table.item(row, 0)
+            meta = item0.data(Qt.ItemDataRole.UserRole) if item0 else None
+            meta = meta if isinstance(meta, dict) else {}
+            row_id = str(meta.get("id") or (item0.text() if item0 else ""))
 
             # Deteksi baris pembayaran (untuk tombol hapus)
             if row_id.startswith("P"):
                 has_payment = True
                 continue
 
-            debit_str = self.table.item(row, 3).text() if self.table.item(row, 3) else "0"
-            debit_str = debit_str.replace("Rp ", "").replace(",", "").strip()
-            try:
-                nominal = float(debit_str) if debit_str != "-" else 0.0
-            except ValueError:
-                nominal = 0.0
-
+            nominal = float(meta.get("debit") or 0.0)
             if nominal > 0:
                 self.selected_sales.append(row)
                 self.total_tagihan += nominal
@@ -747,6 +829,15 @@ class InvoiceView(QWidget):
         try:
             receivable_filter = self._get_filter_field("receivable")
 
+            # --- SNAPSHOT baris penjualan terpilih SEBELUM refresh ---
+            # (notifier bisa memicu reload yang mengosongkan seleksi di tengah proses)
+            selected_meta = []
+            for row in self.selected_sales:
+                item0 = self.table.item(row, 0)
+                meta = item0.data(Qt.ItemDataRole.UserRole) if item0 else None
+                if isinstance(meta, dict) and str(meta.get("id") or "").startswith("S"):
+                    selected_meta.append(meta)
+
             # --- HITUNG SISA PIUTANG KLIEN SAAT INI dari database ---
             receivable = (
                 self.db.query(ClientReceivable)
@@ -792,6 +883,49 @@ class InvoiceView(QWidget):
                     metode=metode,
                 )
                 self.db.add(payment)
+                self.db.flush()  # butuh payment.id untuk alokasi
+
+                # --- ALOKASI deposit ke transaksi yang DIPILIH user ---
+                # (urut tanggal; cap per transaksi = SISA tagihannya agar
+                #  transaksi yang sudah PARTIAL tidak ter-alokasi berlebih.
+                #  Kelebihan deposit tidak dialokasikan → otomatis di-FIFO-kan
+                #  ke transaksi terlama yang belum lunas saat ditampilkan)
+                selected_sids = []
+                for meta in selected_meta:
+                    try:
+                        selected_sids.append(int(str(meta["id"])[1:]))
+                    except (ValueError, TypeError, KeyError):
+                        continue
+
+                existing_alloc = dict(
+                    self.db.query(
+                        PaymentAllocation.sales_id,
+                        func.coalesce(func.sum(PaymentAllocation.nominal), 0.0),
+                    )
+                    .filter(PaymentAllocation.sales_id.in_(selected_sids))
+                    .group_by(PaymentAllocation.sales_id)
+                    .all()
+                ) if selected_sids else {}
+
+                sisa_deposit = float(deposit)
+                for meta in selected_meta:
+                    if sisa_deposit <= 0.005:
+                        break
+                    try:
+                        sid = int(str(meta["id"])[1:])
+                    except (ValueError, TypeError, KeyError):
+                        continue
+                    tagihan = float(meta.get("debit") or 0.0)
+                    sisa_tagihan = max(0.0, tagihan - existing_alloc.get(sid, 0.0))
+                    dialokasikan = min(sisa_deposit, sisa_tagihan)
+                    if dialokasikan <= 0.005:
+                        continue
+                    self.db.add(PaymentAllocation(
+                        payment_id=payment.id,
+                        sales_id=sid,
+                        nominal=dialokasikan,
+                    ))
+                    sisa_deposit -= dialokasikan
 
                 # Recalculate dari data nyata (self-healing)
                 self._recalculate_receivable(self.selected_client_id)
@@ -799,15 +933,23 @@ class InvoiceView(QWidget):
                 if self.notifier:
                     self.notifier.database_changed.emit()
 
-            # --- QUERY SALES DATA UNTUK PDF ---
+            # --- SISA PIUTANG TERKINI untuk PDF (deposit sudah diperhitungkan) ---
+            if simpan_deposit:
+                self.db.expire_all()
+                receivable = (
+                    self.db.query(ClientReceivable)
+                    .filter(receivable_filter == self.selected_client_id)
+                    .first()
+                )
+                sisa_piutang = receivable.sisa if receivable else 0.0
+
+            # --- QUERY SALES DATA UNTUK PDF (dari snapshot seleksi) ---
             selected_ids = []
-            for row in self.selected_sales:
-                id_item = self.table.item(row, 0)
-                if id_item and id_item.text().startswith("S"):
-                    try:
-                        selected_ids.append(int(id_item.text()[1:]))
-                    except ValueError:
-                        continue
+            for meta in selected_meta:
+                try:
+                    selected_ids.append(int(str(meta.get("id"))[1:]))
+                except (ValueError, TypeError):
+                    continue
 
             sales_data = []
             if selected_ids:
@@ -871,7 +1013,7 @@ class InvoiceView(QWidget):
             self.ent_deposit.setText("0")
             self.ent_diskon.setText("0")
 
-            sisa_baru = max(0.0, sisa_piutang - deposit)
+            sisa_baru = max(0.0, sisa_piutang)  # sudah termasuk deposit baru (jika disimpan)
             if simpan_deposit:
                 QMessageBox.information(
                     self, "Sukses",
@@ -907,10 +1049,13 @@ class InvoiceView(QWidget):
 
         payment_ids = []
         for row in selected_rows:
-            id_item = self.table.item(row, 0)
-            if id_item and id_item.text().startswith("P"):
+            item0 = self.table.item(row, 0)
+            meta = item0.data(Qt.ItemDataRole.UserRole) if item0 else None
+            meta = meta if isinstance(meta, dict) else {}
+            row_id = str(meta.get("id") or (item0.text() if item0 else ""))
+            if row_id.startswith("P"):
                 try:
-                    payment_ids.append(int(id_item.text()[1:]))
+                    payment_ids.append(int(row_id[1:]))
                 except ValueError:
                     continue
 

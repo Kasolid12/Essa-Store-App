@@ -140,8 +140,9 @@ def generate_batch_karyawan_slip(run_ids, tanggal_proses):
             c.setFont("Helvetica-Oblique", 8)
             c.drawCentredString(width/2.0, 25*mm, "Jam Kerja dimulai Pukul 08.00 - 16.00 (480 Menit).")
             c.drawCentredString(width/2.0, 20*mm, "Jika melebihi durasi tersebut maka dihitung lembur")
+            c.drawCentredString(width/2.0, 16*mm, "HARI MINGGU → ABSEN = LEMBUR (seluruh durasi)")
             c.setFont("Helvetica-Oblique", 9)
-            c.drawCentredString(width/2.0, 15*mm, "*Nota ini dicetak secara otomatis oleh Sistem Yazmina Hijab")
+            c.drawCentredString(width/2.0, 12*mm, "*Nota ini dicetak secara otomatis oleh Sistem Yazmina Hijab")
 
         for idx, run in enumerate(runs):
             person = run.person
@@ -590,6 +591,7 @@ def generate_salary_slip(salary_run_id):
             c.setFont("Helvetica-Oblique", 8)
             c.drawCentredString(width/2.0, 25*mm, "Jam Kerja dimulai Pukul 08.00 - 16.00 (480 Menit).")
             c.drawCentredString(width/2.0, 20*mm, "Jika melebihi durasi tersebut maka dihitung lembur")
+            c.drawCentredString(width/2.0, 16*mm, "HARI MINGGU → Jadwal/ABSEN = LEMBUR (seluruh durasi)")
 
         c.setFont("Helvetica-Oblique", 9)
         # Cetak tepat di tengah bawah kertas

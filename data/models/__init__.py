@@ -9,7 +9,7 @@ from .catatan_harian import HasilCutting, DistribusiCutting, ModalOperasional, P
 from .debt import DebtEntry, DebtPayment
 from .bon import BonBalance, BonMovement
 from .salary import SalaryRun, SalaryLineItem, PengsupReconciliation, AttendanceRecord
-from .invoice import Invoice, InvoiceLine, ClientReceivable, ClientReceivablePayment
+from .invoice import Invoice, InvoiceLine, ClientReceivable, ClientReceivablePayment, PaymentAllocation
 from .stock_audit import StockMovement, AuditLog
 from .profit_history import ProfitHistory
 

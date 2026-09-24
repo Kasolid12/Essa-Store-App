@@ -93,3 +93,31 @@ class ClientReceivablePayment(Base):
     updated_by_device: Mapped[Optional[str]] = mapped_column(String)
 
     receivable = relationship("ClientReceivable", back_populates="payments")
+    # Alokasi pembayaran → transaksi penjualan (transaksi mana yang dilunasi pembayaran ini)
+    allocations: Mapped[List["PaymentAllocation"]] = relationship(
+        "PaymentAllocation", back_populates="payment", cascade="all, delete-orphan"
+    )
+
+class PaymentAllocation(Base):
+    """Alokasi pembayaran piutang ke transaksi penjualan spesifik.
+
+    Satu baris = "pembayaran X melunasi Rp N dari penjualan Y".
+    Dipakai InvoiceView untuk menentukan status LUNAS/PARTIAL/BELUM LUNAS
+    per transaksi sesuai pilihan user saat pelunasan (bukan sekadar FIFO tanggal).
+    Pembayaran tanpa baris alokasi (data lama) difallback ke FIFO oleh UI.
+    """
+    __tablename__ = "payment_allocations"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    payment_id: Mapped[int] = mapped_column(ForeignKey("client_receivable_payments.id"), nullable=False, index=True)
+    sales_id: Mapped[int] = mapped_column(ForeignKey("pengeluaran_offline.id"), nullable=False, index=True)
+    nominal: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
+    updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime, default=datetime.now, onupdate=datetime.now)
+    # NOTE (Fase 6.3): kepemilikan baris antar perangkat (diisi otomatis via event di base.py; NULL = baris lama)
+    created_by_device: Mapped[Optional[str]] = mapped_column(String)
+    updated_by_device: Mapped[Optional[str]] = mapped_column(String)
+
+    payment = relationship("ClientReceivablePayment", back_populates="allocations")
+    sales = relationship("PengeluaranOffline")

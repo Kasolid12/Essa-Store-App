@@ -1,32 +1,67 @@
-# Dependencies
-node_modules/
-__pycache__/
-*.pyc
-
-# Environment
-.env
-.env.local
-.env.*.local
-
-# Build
-frontend/dist/
+# ── Node/JS ──────────────────────────────────────────────
+frontend/node_modules/
 frontend/.vite/
+frontend/dist/
+frontend/*.log
 
-# IDE
-.vscode/
-.idea/
-*.swp
-*.swo
-
-# OS
-.DS_Store
-Thumbs.db
-
-# Database
+# ── Python ──────────────────────────────────────────────
+backend/__pycache__/
+backend/**/__pycache__/
+backend/*.egg-info/
+backend/*.log
 *.db
 *.db-wal
 *.db-shm
 
-# Uploads / temp
-uploads/
-*.pdf
+# ── Virtual Envs ───────────────────────────────────────
+venv/
+.venv/
+**/venv/
+**/.venv/
+
+# ── Environment / Secrets ──────────────────────────────
+backend/.env
+.env
+.env.local
+.env.*.local
+
+# ── Alembic ────────────────────────────────────────────
+backend/alembic/versions/*.py
+backend/alembic/versions/__pycache__/
+
+# ── Build / Artifacts ──────────────────────────────────
+*.pyc
+*.pyo
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+
+# ── Test Files ──────────────────────────────────────────
+backend/test_*.py
+frontend/*.test.js
+frontend/*.test.jsx
+frontend/coverage/
+
+# ── Desktop App Leftovers (NOT part of web app) ────────
+data/
+ui/
+utils/
+scripts/
+*.db
+desktop/
+excel/
+
+# ── IDE ────────────────────────────────────────────────
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+
+# ── OS ────────────────────────────────────────────────
+.DS_Store*
+ehthumbs.db
+Icon?
+
+# ── Docker ────────────────────────────────────────────
+docker-compose.override.yml

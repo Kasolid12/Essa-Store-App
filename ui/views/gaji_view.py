@@ -1,8 +1,9 @@
 # app_essa/ui/views/gaji_view.py
 import os
+import re
 import pandas as pd
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QFrame, 
+    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QFrame, QCheckBox,
     QComboBox, QSpinBox, QDoubleSpinBox, QDateEdit, QMessageBox, 
     QTableWidgetItem, QHeaderView, QTabWidget, QGridLayout, QLineEdit, QGroupBox,
     QFileDialog
@@ -88,6 +89,51 @@ class GajiView(QWidget):
             if 0.0 <= float(v_str) <= 1.0: return float(v_str)
         except: pass
         return None
+    
+    # Kamus 3 huruf hari (diambil dari tanggal Excel 'DD MMM')
+    # Hanya MINGGU yang dianggap hari libur → masuk hari Minggu = lembur penuh.
+    # 'min'/'ming'/'minggu' = varian singkatan Minggu dari mesin fingerprint;
+    # Sabtu ('sab') tetap hari kerja normal.
+    _HARI_LIBUR_SHORT = {'min', 'ming', 'minggu'}
+    
+    def is_hari_libur_short(self, date_val: str) -> bool:
+        """Return True jika tanggal merupakan hari Minggu (libur).
+
+        Tanggal dari Excel berbentuk '30 Sab' / '30 Ming'; cukup ambil
+        kata hari-nya lalu cek ke kamus _HARI_LIBUR_SHORT.
+        Hanya MINGGU yang dianggap libur; Sabtu tetap hari kerja normal.
+        """
+        if not date_val:
+            return False
+        m = re.match(r'\d+\s+([A-Za-z]+)', str(date_val).strip())
+        if not m:
+            return False
+        return m.group(1).lower() in self._HARI_LIBUR_SHORT
+
+    # Batas jam kerja normal per hari (8 jam = 480 menit), sisanya lembur.
+    BATAS_NORMAL_MENIT = 480
+
+    @staticmethod
+    def hitung_pembagian_menit(total_mnt: int, is_hari_libur: bool, akui_libur_sebagai_lembur: bool):
+        """SATU SUMBER RUMUS pembagian jam kerja (dipakai jalur import Excel
+        DAN tombol Simpan di editor absensi agar hasil selalu konsisten).
+
+        Aturan:
+        - Hari libur (MINGGU saja; Sabtu tetap hari kerja normal) + centang
+          'Akui HARI MINGGU sebagai LEMBUR' aktif → seluruh durasi jadi LEMBUR.
+        - Hari normal → 480 menit pertama dihitung normal, sisanya lembur.
+
+        Return: (menit_normal, menit_lembur, status)
+        """
+        total_mnt = max(0, int(total_mnt or 0))
+        if total_mnt == 0:
+            return 0, 0, "NORMAL"
+        if is_hari_libur and akui_libur_sebagai_lembur:
+            return 0, total_mnt, "LEMBUR_HARI_LIBUR"
+        menit_normal = min(total_mnt, GajiView.BATAS_NORMAL_MENIT)
+        menit_lembur = max(0, total_mnt - GajiView.BATAS_NORMAL_MENIT)
+        status = "NORMAL" if menit_lembur == 0 else "NORMAL_LEMBUR"
+        return menit_normal, menit_lembur, status
     
     def setup_ui(self):
         layout = QVBoxLayout(self)
@@ -395,6 +441,11 @@ class GajiView(QWidget):
         self.tarif_lembur.setPrefix("Rp "); self.tarif_lembur.setSuffix(" /Mnt")
         self.tarif_lembur.valueChanged.connect(self.recalc_pasukan)
 
+        self.chk_akui_libur_lembur = QCheckBox("Akui HARI MINGGU sebagai LEMBUR\n(Jadwal/ABSEN hari Minggu = lembur, bukan jam normal)")
+        self.chk_akui_libur_lembur.setStyleSheet("font-weight: bold; color: #f0c674;")
+        self.chk_akui_libur_lembur.setChecked(True)
+        self.chk_akui_libur_lembur.toggled.connect(self.recalc_pasukan)
+
         top_lay.addWidget(btn_import)
         top_lay.addWidget(self.btn_edit_karyawan)
         top_lay.addWidget(self.lbl_file_absen)
@@ -402,6 +453,7 @@ class GajiView(QWidget):
         top_lay.addWidget(QLabel("Tgl Payroll:")); top_lay.addWidget(self.pasukan_date)
         top_lay.addWidget(QLabel("Tarif Normal:")); top_lay.addWidget(self.tarif_normal)
         top_lay.addWidget(QLabel("Tarif Lembur:")); top_lay.addWidget(self.tarif_lembur)
+        top_lay.addWidget(self.chk_akui_libur_lembur)
         lay.addWidget(top_frame)
 
         # -- Smart Grid Table --
@@ -1360,12 +1412,18 @@ class GajiView(QWidget):
                                 hari_hadir += 1
                             else:
                                 jam_keluar_str = "Lupa"
-                                total_mnt = 0 
+                                total_mnt = 0
                                 hari_hadir += 1
-                            
-                            menit_normal = min(total_mnt, 480)
-                            lembur = max(0, total_mnt - 480)
-                            
+
+                            # Pembagian normal/lembur memakai SATU rumus bersama
+                            # (hitung_pembagian_menit): Minggu = lembur penuh bila
+                            # centang aktif; hari lain 480 mnt normal + sisa lembur.
+                            menit_normal, lembur, status_harian = self.hitung_pembagian_menit(
+                                total_mnt,
+                                self.is_hari_libur_short(date_val),
+                                self.chk_akui_libur_lembur.isChecked(),
+                            )
+
                             total_normal += menit_normal
                             total_lembur += lembur
                             
@@ -1377,9 +1435,12 @@ class GajiView(QWidget):
                                 "masuk": jam_masuk_str,   # Contoh Output: "08:15"
                                 "keluar": jam_keluar_str, # Contoh Output: "16:45" atau "Lupa"
                                 "menit_normal": menit_normal,
-                                "menit_lembur": lembur
+                                "menit_lembur": lembur,
+                                "status": status_harian,
                             })
-                            
+
+                    # Akumulasi rekap dilakukan SEKALI per karyawan (setelah loop
+                    # harian selesai) agar total tidak terhitung ganda.
                     if name_str not in rekap_dict: rekap_dict[name_str] = {'hadir': 0, 'normal': 0, 'lembur': 0}
                     rekap_dict[name_str]['hadir'] += hari_hadir
                     rekap_dict[name_str]['normal'] += total_normal
@@ -1822,6 +1883,7 @@ class GajiView(QWidget):
                 
                 menit_norm = 0
                 menit_lemb = 0
+                total_mnt = 0
                 
                 # Rumus Hitung Selisih Jam (HH:MM)
                 if masuk_str and keluar_str and keluar_str.lower() != "lupa":
@@ -1835,22 +1897,30 @@ class GajiView(QWidget):
                         diff = max_t - min_t
                         if diff < 0: diff += 1440 # Jika kerja lintas malam
                         
-                        # Aturan standar: max 8 jam (480 menit) normal, sisanya lembur
-                        menit_norm = min(diff, 480)
-                        menit_lemb = max(0, diff - 480)
+                        total_mnt = diff
                     except Exception:
                         pass # Abaikan jika salah ketik format jam
                 
                 # Simpan permanen kembali ke variabel Dictionary Latar Belakang (Cache)
                 self.cache_absensi_harian[cache_name][i]['masuk'] = masuk_str
                 self.cache_absensi_harian[cache_name][i]['keluar'] = keluar_str
+                # Pembagian normal/lembur memakai SATU rumus bersama dengan
+                # jalur import Excel (hitung_pembagian_menit) → hasil konsisten.
+                # Klasifikasi hari: hanya MINGGU libur (Sabtu = hari kerja normal).
+                date_cache = self.cache_absensi_harian[cache_name][i].get('tanggal', '')
+                menit_norm, menit_lemb, status_harian = self.hitung_pembagian_menit(
+                    total_mnt,
+                    self.is_hari_libur_short(date_cache),
+                    self.chk_akui_libur_lembur.isChecked(),
+                )
                 self.cache_absensi_harian[cache_name][i]['menit_normal'] = menit_norm
                 self.cache_absensi_harian[cache_name][i]['menit_lembur'] = menit_lemb
-                
+                self.cache_absensi_harian[cache_name][i]['status'] = status_harian
+
                 # Hitung akumulasi untuk tabel utama
                 if menit_norm > 0 or menit_lemb > 0 or (masuk_str and keluar_str.lower() != 'lupa'):
                     total_hadir += 1
-                    
+
                 total_menit_normal += menit_norm
                 total_menit_lembur += menit_lemb
 

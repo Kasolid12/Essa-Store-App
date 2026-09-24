@@ -32,6 +32,7 @@ TABLE_ORDER = [
     "invoice_lines",
     "client_receivables",       # FK → invoices, clients, persons
     "client_receivable_payments",
+    "payment_allocations",      # FK → client_receivable_payments, pengeluaran_offline
     "stock_movements",
     "audit_log",
     "profit_history",           # FK → debt_entries
